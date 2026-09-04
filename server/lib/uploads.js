@@ -21,19 +21,37 @@ const storage = multer.diskStorage({
   },
 });
 
-export const photoUpload = multer({
-  storage,
-  limits: {
-    fileSize: Math.max(1, getSettingNumber('max_photo_mb', 8)) * 1024 * 1024,
-    files: 8,
+// El límite sale de la configuración, que vive en la base de datos: se
+// construye en la primera petición, nunca al importar el módulo (en ese
+// momento el esquema puede no existir todavía).
+let uploader = null;
+let uploaderLimitMb = null;
+
+function buildUploader() {
+  uploaderLimitMb = Math.max(1, getSettingNumber('max_photo_mb', 8));
+  return multer({
+    storage,
+    limits: { fileSize: uploaderLimitMb * 1024 * 1024, files: 8 },
+    fileFilter(req, file, cb) {
+      if (!ALLOWED.has(file.mimetype)) {
+        return cb(new Error(`Formato de imagen no permitido: ${file.mimetype}`));
+      }
+      cb(null, true);
+    },
+  });
+}
+
+/** Middleware de subida que respeta el límite configurado en Administración. */
+export const photoUpload = {
+  array(field, max) {
+    return (req, res, next) => {
+      if (!uploader || uploaderLimitMb !== Math.max(1, getSettingNumber('max_photo_mb', 8))) {
+        uploader = buildUploader();
+      }
+      return uploader.array(field, max)(req, res, next);
+    };
   },
-  fileFilter(req, file, cb) {
-    if (!ALLOWED.has(file.mimetype)) {
-      return cb(new Error(`Formato de imagen no permitido: ${file.mimetype}`));
-    }
-    cb(null, true);
-  },
-});
+};
 
 /** Convierte los archivos de multer al formato que espera recordMovement. */
 export function toPhotoRecords(files = [], kinds = {}) {

@@ -4,14 +4,20 @@ import { setTimezone } from './time.js';
 let cache = null;
 
 export function loadSettings() {
-  cache = Object.fromEntries(all('SELECT key, value FROM settings').map((r) => [r.key, r.value]));
+  try {
+    cache = Object.fromEntries(all('SELECT key, value FROM settings').map((r) => [r.key, r.value]));
+  } catch {
+    // El esquema todavía no existe (arranque en frío): se usan los valores
+    // por defecto y se recarga en cuanto la migración termina.
+    return {};
+  }
   setTimezone(cache.timezone);
   return cache;
 }
 
 export function getSetting(key, fallback = null) {
   if (!cache) loadSettings();
-  return cache[key] ?? fallback;
+  return cache?.[key] ?? fallback;
 }
 
 export function getSettingBool(key, fallback = false) {
