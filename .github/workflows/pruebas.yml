@@ -22,8 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # El proyecto declara engines >=20; se prueban la LTS y la actual.
-        node: ['20', '22']
+        # better-sqlite3 exige Node >=22; se prueban la LTS y la actual.
+        node: ['22', '24']
 
     steps:
       - uses: actions/checkout@v4

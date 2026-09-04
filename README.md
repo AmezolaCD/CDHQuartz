@@ -168,7 +168,7 @@ movimientos auditables como cualquier otro cambio.
 
 ## Notas técnicas
 
-- Node.js ≥ 20, Express 5, SQLite (better-sqlite3). Sin proceso de compilación
+- Node.js ≥ 22 (lo exige `better-sqlite3`), Express 5, SQLite (better-sqlite3). Sin proceso de compilación
   en el cliente: HTML, CSS y JavaScript nativos.
 - Las fotografías se guardan en `data/uploads/AAAA-MM-DD/` y sólo se sirven a
   usuarios autenticados con permiso de consulta.
