@@ -1,0 +1,79 @@
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Una serie de pushes seguidos sólo deja viva la última ejecución.
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # El proyecto declara engines >=20; se prueban la LTS y la actual.
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Verificar sintaxis del cliente
+        # La interfaz no pasa por un compilador: este es su único control.
+        run: |
+          find public/js -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Pruebas automatizadas
+        run: npm test
+
+      - name: Arranque en frío sobre base vacía
+        # Regresión conocida: leer configuración al importar un módulo rompía
+        # el arranque cuando el esquema todavía no existía.
+        env:
+          PORT: '3210'
+          CDH_DATA_DIR: ${{ runner.temp }}/cdh-arranque
+        run: |
+          set -euo pipefail
+          npm start > "$RUNNER_TEMP/servidor.log" 2>&1 &
+          PID=$!
+          for _ in $(seq 1 30); do
+            if curl -sf "http://localhost:$PORT/api/health" > /dev/null; then break; fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "::error::El servidor terminó durante el arranque."
+              cat "$RUNNER_TEMP/servidor.log"; exit 1
+            fi
+            sleep 1
+          done
+          curl -sf "http://localhost:$PORT/api/health" > /dev/null \
+            || { echo "::error::El servidor no respondió a /api/health."; cat "$RUNNER_TEMP/servidor.log"; exit 1; }
+
+          HABITACIONES=$(node -e "
+            const D = require('better-sqlite3');
+            const db = new D(process.env.CDH_DATA_DIR + '/cdh.sqlite', { readonly: true });
+            process.stdout.write(String(db.prepare('SELECT COUNT(*) n FROM rooms').get().n));
+          ")
+          echo "Habitaciones sembradas: $HABITACIONES"
+          if [ "$HABITACIONES" != "155" ]; then
+            echo "::error::Se esperaban 155 habitaciones y se sembraron $HABITACIONES."
+            cat "$RUNNER_TEMP/servidor.log"; exit 1
+          fi
+          kill "$PID"
+          echo "Arranque en frío correcto: 155 habitaciones en 9 pisos."
