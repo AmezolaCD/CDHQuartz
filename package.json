@@ -1,0 +1,27 @@
+{
+  "name": "cdh-quartz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CDH - Control de Detalles por Habitación | Hotel Quartz",
+  "type": "module",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/db/seed.js",
+    "reset": "node server/db/reset.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "pdfkit": "^0.20.2"
+  }
+}
