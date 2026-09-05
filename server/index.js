@@ -53,7 +53,19 @@ app.use('/api/{*path}', (req, res) => {
 });
 
 // Interfaz estática (SPA sin proceso de compilación).
-app.use(express.static(path.join(ROOT, 'public'), { index: 'index.html', maxAge: '1h' }));
+// La interfaz no pasa por un compilador, así que los archivos no llevan hash
+// en el nombre: con una caché larga, un despliegue nuevo tardaba hasta una
+// hora en llegar al navegador. HTML, JS y CSS se revalidan siempre (ETag
+// responde 304 y no se retransmiten); las imágenes y fuentes sí se cachean.
+app.use(express.static(path.join(ROOT, 'public'), {
+  index: 'index.html',
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    res.setHeader('Cache-Control',
+      /\.(html|js|css)$/i.test(filePath) ? 'no-cache' : 'public, max-age=604800');
+  },
+}));
 app.get('/{*path}', (req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 
 // ------------------------------------------------------- Manejo de errores
