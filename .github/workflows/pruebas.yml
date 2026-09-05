@@ -125,7 +125,12 @@ jobs:
           cache: npm
 
       - name: Instalar dependencias
-        run: npm ci
+        # better-sqlite3 trae binarios precompilados para win32-x64, pero npm
+        # dispara node-gyp igualmente por la presencia de binding.gyp, y el
+        # runner no tiene una versión de Visual Studio que node-gyp reconozca.
+        # --ignore-scripts evita esa compilación innecesaria; ninguna
+        # dependencia del proyecto declara scripts de instalación.
+        run: npm ci --ignore-scripts
 
       - name: Pruebas automatizadas
         run: npm test
