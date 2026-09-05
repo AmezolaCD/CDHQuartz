@@ -1,0 +1,224 @@
+// ============================================================================
+// Pruebas de interfaz en navegador real.
+//
+// Cubren lo que las pruebas de servidor no pueden ver: el ciclo de vida del
+// DOM al navegar. El expediente de habitación se apiló dos veces en producción
+// porque los manejadores se acumulaban sobre nodos compartidos, y ninguna
+// prueba de lógica podía detectarlo.
+//
+//   npm run test:ui
+// ============================================================================
+import { test, before, after, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { chromium } from 'playwright';
+
+const CLAVE = 'Prueba#Interfaz2026';
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-ui-'));
+const RAIZ = path.resolve(import.meta.dirname, '..', '..');
+
+let servidor; let navegador; let base;
+
+/** Puerto libre, para no chocar con un servidor de desarrollo ya abierto. */
+function puertoLibre() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
+async function esperarSalud(url, intentos = 60) {
+  for (let i = 0; i < intentos; i += 1) {
+    try {
+      const r = await fetch(`${url}/api/health`);
+      if (r.ok) return;
+    } catch { /* todavía arrancando */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`El servidor no respondió en ${url}`);
+}
+
+before(async () => {
+  const puerto = await puertoLibre();
+  base = `http://127.0.0.1:${puerto}`;
+  servidor = spawn(process.execPath, ['server/index.js'], {
+    cwd: RAIZ,
+    stdio: 'ignore',
+    env: { ...process.env, PORT: String(puerto), CDH_DATA_DIR: TMP, CDH_SEED_PASSWORD: CLAVE },
+  });
+  await esperarSalud(base);
+  navegador = await chromium.launch({
+    // En CI se usa el Chromium que instala Playwright; la variable permite
+    // apuntar a uno ya presente en la imagen de desarrollo.
+    executablePath: process.env.CDH_CHROMIUM_PATH || undefined,
+  });
+});
+
+after(async () => {
+  await navegador?.close();
+  servidor?.kill();
+  fs.rmSync(TMP, { recursive: true, force: true });
+});
+
+/** Sesión iniciada y aviso de contraseña descartado. */
+async function abrirSesion(usuario = 'sistemas') {
+  const page = await navegador.newPage({ viewport: { width: 1440, height: 940 } });
+  const errores = [];
+  page.on('pageerror', (e) => errores.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('401')) errores.push(m.text()); });
+  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.fill('#u', usuario);
+  await page.fill('#p', CLAVE);
+  await page.click('#loginForm [type=submit]');
+  await page.waitForSelector('.appbar');
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => document.querySelector('.modal-wrap')?.remove());
+  return { page, errores };
+}
+
+const paneles = (page) => page.evaluate(() => document.querySelectorAll('.drawer').length);
+
+/** Manejadores 'click' REALES sobre un nodo, según el protocolo de DevTools. */
+async function manejadores(page, selector) {
+  const cdp = await page.context().newCDPSession(page);
+  const { result } = await cdp.send('Runtime.evaluate', {
+    expression: `document.querySelector(${JSON.stringify(selector)})`,
+    objectGroup: 'sonda',
+  });
+  const { listeners } = await cdp.send('DOMDebugger.getEventListeners', { objectId: result.objectId });
+  await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'sonda' });
+  await cdp.detach();
+  return listeners.filter((l) => l.type === 'click').length;
+}
+
+describe('Expediente de habitación', () => {
+  test('navegar entre vistas no acumula manejadores en el outlet', async () => {
+    const { page } = await abrirSesion();
+    const inicial = await manejadores(page, '[data-outlet]');
+    for (let i = 0; i < 5; i += 1) {
+      await page.evaluate(() => { location.hash = '#/pisos'; });
+      await page.waitForSelector('.rack-grid');
+      await page.evaluate(() => { location.hash = '#/inicio'; });
+      await page.waitForSelector('.kpi');
+      await page.waitForTimeout(400);
+    }
+    assert.equal(await manejadores(page, '[data-outlet]'), inicial,
+      'el outlet debe conservar los mismos manejadores tras navegar');
+    await page.close();
+  });
+
+  test('un clic abre un solo panel, aunque se haya navegado mucho', async () => {
+    const { page } = await abrirSesion();
+    for (const piso of ['Piso 4', 'Piso 6', 'Piso 9', 'Piso 11']) {
+      await page.locator('.floor-chip', { hasText: piso }).click();
+      await page.waitForTimeout(450);
+    }
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(400);
+    assert.equal(await paneles(page), 1, 'sólo debe abrirse un expediente');
+    await page.close();
+  });
+
+  test('un solo clic fuera lo cierra', async () => {
+    const { page } = await abrirSesion();
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(400);
+    await page.mouse.click(200, 760);
+    await page.waitForTimeout(500);
+    assert.equal(await paneles(page), 0, 'un clic fuera debe bastar');
+    await page.close();
+  });
+
+  test('la vista Pisos tampoco duplica el panel', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.waitForTimeout(700);
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(400);
+    assert.equal(await paneles(page), 1);
+    await page.close();
+  });
+
+  test('se puede cerrar y volver a abrir', async () => {
+    const { page } = await abrirSesion();
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(350);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    assert.equal(await paneles(page), 0, 'Escape debe cerrar');
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(350);
+    assert.equal(await paneles(page), 1, 'el guardián debe liberarse al cerrar');
+    await page.close();
+  });
+});
+
+describe('Recorrido de operación', () => {
+  test('buscar "618" abre esa habitación', async () => {
+    const { page } = await abrirSesion();
+    await page.fill('#globalSearch', '618');
+    await page.waitForSelector('.search-results button');
+    await page.locator('.search-results button').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.waitForTimeout(400);
+    assert.equal(await paneles(page), 1);
+    assert.match(await page.locator('.drawer h2').first().textContent(), /618/);
+    await page.close();
+  });
+
+  test('registrar una acción actualiza estado e historial', async () => {
+    const { page } = await abrirSesion();
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Reportar mantenimiento' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.fill('#actionForm [name=comment]', 'Prueba automatizada de interfaz.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+
+    await page.locator('.drawer [data-tab="historial"]').click();
+    await page.waitForSelector('.tl-card');
+    const linea = await page.locator('.timeline').textContent();
+    assert.match(linea, /Reportar mantenimiento/);
+    assert.match(linea, /Mantenimiento pendiente/, 'el cambio de estado debe verse en el historial');
+    await page.close();
+  });
+
+  test('la administración expone acciones con etiqueta', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/admin'; });
+    await page.waitForSelector('.tabs');
+    await page.locator('[data-tab="users"]').click();
+    await page.waitForSelector('table');
+    await page.waitForTimeout(600);
+    assert.ok(await page.locator('button[data-edit-user]:has-text("Editar")').count() > 0,
+      'cada usuario debe tener un botón "Editar" legible');
+    assert.ok(await page.locator('button[data-perms]:has-text("Permisos")').count() > 0,
+      'cada rol debe tener un botón "Permisos" legible');
+    await page.close();
+  });
+
+  test('ninguna vista produce errores de JavaScript', async () => {
+    const { page, errores } = await abrirSesion();
+    for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {
+      await page.evaluate((v) => { location.hash = `#/${v}`; }, vista);
+      await page.waitForTimeout(900);
+      assert.equal(await page.locator('.alert.error').count(), 0, `la vista ${vista} falló al cargar`);
+    }
+    assert.deepEqual(errores, [], 'la consola no debe registrar errores');
+    await page.close();
+  });
+});

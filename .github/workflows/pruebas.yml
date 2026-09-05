@@ -77,3 +77,37 @@ jobs:
           fi
           kill "$PID"
           echo "Arranque en frío correcto: 155 habitaciones en 9 pisos."
+
+  interfaz:
+    name: Interfaz (navegador)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Instalar Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Pruebas de interfaz
+        # Levantan su propio servidor sobre una base temporal y lo apagan al
+        # terminar: no hace falta orquestar nada desde el workflow.
+        run: npm run test:ui
+
+      - name: Guardar el resultado si algo falla
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interfaz-fallo
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -20,7 +20,8 @@ habitaciones. Para recargar desde cero:
 
 ```bash
 npm run reset && npm run seed
-npm test             # 32 pruebas: distribución, transacciones, inmutabilidad, permisos y puesta al día
+npm test             # 32 pruebas de servidor: distribución, transacciones, inmutabilidad, permisos y puesta al día
+npm run test:ui      # 9 pruebas en navegador: apilado de paneles, recorrido de operación y errores de consola
 ```
 
 ### Actualizar una instalación en uso
