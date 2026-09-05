@@ -329,3 +329,10 @@ tbody tr:hover{background:var(--surface-2)}
   main{max-width:none;padding:0}
   .card{box-shadow:none;break-inside:avoid}
 }
+
+/* ------------------------------------------------------------------ marca */
+/* El logo es monocromo: en la barra se invierte a blanco, y en la pantalla
+   de acceso conserva el color de la marca. */
+.brand-logo{height:30px;width:auto;filter:brightness(0) invert(1);opacity:.95}
+.login-logo{display:block;height:64px;width:auto;margin:0 0 18px}
+@media (max-width:900px){.brand-logo{height:26px}}

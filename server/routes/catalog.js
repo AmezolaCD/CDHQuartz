@@ -4,8 +4,32 @@ import { requireAuth, requirePermission, asyncRoute } from '../middleware/auth.j
 import { photoPath } from '../lib/uploads.js';
 import { getSetting } from '../lib/settings.js';
 import { getTimezone } from '../lib/time.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT } from '../lib/db.js';
+
+/**
+ * Logo del hotel. Basta con dejar logo.svg/.png/.jpg/.webp en public/assets
+ * para que la interfaz lo use; si no hay ninguno, cae en la marca de texto.
+ */
+function logoUrl() {
+  const dir = path.join(ROOT, 'public', 'assets');
+  for (const ext of ['svg', 'png', 'webp', 'jpg', 'jpeg']) {
+    const archivo = path.join(dir, `logo.${ext}`);
+    if (fs.existsSync(archivo)) {
+      // La marca de tiempo evita servir una versión cacheada tras sustituirlo.
+      return `/assets/logo.${ext}?v=${Math.trunc(fs.statSync(archivo).mtimeMs)}`;
+    }
+  }
+  return null;
+}
 
 const router = express.Router();
+
+/** Marca del hotel para la pantalla de acceso, antes de iniciar sesión. */
+router.get('/bootstrap/logo', asyncRoute((req, res) => {
+  res.json({ logo: logoUrl(), hotel: getSetting('hotel_name', 'Hotel Quartz') });
+}));
 
 /** Catálogos que la interfaz necesita al arrancar. */
 router.get('/bootstrap', requireAuth, asyncRoute((req, res) => {
@@ -15,6 +39,7 @@ router.get('/bootstrap', requireAuth, asyncRoute((req, res) => {
       app: getSetting('app_name', 'CDH'),
       timezone: getTimezone(),
       targetRooms: Number(getSetting('target_room_count', 155)),
+      logo: logoUrl(),
     },
     floors: all(`
       SELECT f.id, f.number, f.name, f.sort_order,
@@ -70,16 +95,30 @@ router.get('/audit', requireAuth, requirePermission('audit.view'), asyncRoute((r
   });
 }));
 
-/** Notificaciones: sólo eventos relevantes. */
+/**
+ * Notificaciones: sólo eventos relevantes, y sólo para quien le tocan.
+ * Quien puede atender notificaciones (Gerencia, Supervisión, Administración)
+ * las ve todas; el resto ve las dirigidas a su departamento, más las
+ * generales, que no llevan destinatario.
+ */
 router.get('/notifications', requireAuth, asyncRoute((req, res) => {
+  const veTodo = req.user.permissions.includes('notification.manage');
   const items = all(`
-    SELECT n.*, (nr.read_at IS NOT NULL) AS is_read
+    SELECT n.*, (nr.read_at IS NOT NULL) AS is_read,
+           (SELECT GROUP_CONCAT(d.name, ', ')
+              FROM notification_recipients rc
+              JOIN departments d ON d.id = rc.department_id
+             WHERE rc.notification_id = n.id) AS recipients
       FROM notifications n
       LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = @user
      WHERE n.resolved_at IS NULL
+       AND (@veTodo = 1
+            OR NOT EXISTS (SELECT 1 FROM notification_recipients r WHERE r.notification_id = n.id)
+            OR EXISTS (SELECT 1 FROM notification_recipients r
+                        WHERE r.notification_id = n.id AND r.department_id = @dept))
      ORDER BY CASE n.severity WHEN 'critica' THEN 0 WHEN 'alta' THEN 1 ELSE 2 END,
               n.created_epoch DESC
-     LIMIT 50`, { user: req.user.id });
+     LIMIT 50`, { user: req.user.id, veTodo: veTodo ? 1 : 0, dept: req.user.department_id ?? -1 });
   res.json({ total: items.length, unread: items.filter((i) => !i.is_read).length, items });
 }));
 

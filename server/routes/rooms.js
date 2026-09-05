@@ -278,7 +278,7 @@ router.post('/:id/movements',
 router.get('/meta/quick-actions', asyncRoute((req, res) => {
   const rows = all(`
     SELECT mt.code, mt.name, mt.icon, mt.severity, mt.requires_comment, mt.requires_photo,
-           mt.allows_photo, mt.is_incident, mt.is_quick_action, mt.sort_order,
+           mt.allows_photo, mt.is_incident, mt.is_quick_action, mt.cross_department, mt.sort_order,
            c.id AS category_id, c.code AS category_code, c.name AS category_name,
            c.department_id AS category_department_id,
            s.code AS target_status_code, s.name AS target_status_name
@@ -289,7 +289,7 @@ router.get('/meta/quick-actions', asyncRoute((req, res) => {
      ORDER BY mt.sort_order`);
   res.json({
     actions: rows
-      .filter((a) => canWriteCategory(req.user, a.category_department_id))
+      .filter((a) => a.cross_department || canWriteCategory(req.user, a.category_department_id))
       .filter((a) => !a.target_status_code || req.user.permissions.includes('room.status'))
       .map((a) => ({ ...a, requiresComment: !!a.requires_comment, requiresPhoto: !!a.requires_photo })),
   });
