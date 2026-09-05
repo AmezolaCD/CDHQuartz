@@ -12,6 +12,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "seed": "node server/db/seed.js",
+    "upgrade": "node server/db/upgrade.js",
     "reset": "node server/db/reset.js",
     "test": "node --test test/*.test.js"
   },
