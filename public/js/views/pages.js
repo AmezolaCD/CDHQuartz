@@ -5,9 +5,11 @@ import { state, can } from '../store.js';
 import { openRoom } from './room.js';
 import { floorBar, renderFloorMap, activityRow, attentionRow } from './dashboard.js';
 
+// Abre el expediente desde listas y tablas. Se excluye la cuadrícula del
+// rack: ésa la maneja renderFloorMap, y atender ambas abría dos paneles.
 const bindRooms = (outlet, refresh) => outlet.addEventListener('click', (e) => {
   const b = e.target.closest('[data-room]');
-  if (b) openRoom(Number(b.dataset.room), { onChange: refresh });
+  if (b && !b.closest('.rack-grid')) openRoom(Number(b.dataset.room), { onChange: refresh });
 });
 
 // ============================================================ Pisos y mapa

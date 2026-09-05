@@ -14,9 +14,21 @@ async function quickActions() {
 export const resetQuickActions = () => { quickActionsCache = null; };
 
 /** Abre el expediente de una habitación. */
+// Sólo puede haber un expediente abierto a la vez: si algún origen dispara
+// dos veces, la segunda apertura se descarta en vez de apilar paneles.
+let openRoomDrawer = null;
+
 export async function openRoom(roomId, { onChange = null, tab = 'detalle' } = {}) {
-  const d = drawer({ title: 'Habitación', subtitle: 'Cargando expediente…', body: spinner() });
+  if (openRoomDrawer) return openRoomDrawer;
+
   let dirty = false;
+  const d = drawer({
+    title: 'Habitación', subtitle: 'Cargando expediente…', body: spinner(),
+    onClose: () => { openRoomDrawer = null; },
+  });
+  // Se registra ANTES de cualquier await: dos clics en el mismo tick deben
+  // encontrar el guardián ya puesto.
+  openRoomDrawer = { close: d.close, get dirty() { return dirty; } };
 
   const load = async (activeTab = tab) => {
     const data = await api.get(`/api/rooms/${roomId}`);
@@ -78,7 +90,7 @@ export async function openRoom(roomId, { onChange = null, tab = 'detalle' } = {}
   };
 
   await load(tab);
-  return { close: d.close, get dirty() { return dirty; } };
+  return openRoomDrawer;
 }
 
 // ------------------------------------------------------------------ Detalle

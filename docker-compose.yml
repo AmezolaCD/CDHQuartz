@@ -1,0 +1,51 @@
+# ============================================================================
+# CDH — Hotel Quartz
+#   cp .env.example .env   # y defina CDH_SEED_PASSWORD
+#   docker compose up -d --build
+# ============================================================================
+services:
+  cdh:
+    build:
+      context: .
+    image: cdh-quartz:1.0.0
+    container_name: cdh-quartz
+    restart: unless-stopped
+
+    ports:
+      # Sólo al bucle local por defecto: exponga el servicio detrás de un
+      # proxy inverso con HTTPS en lugar de publicarlo directo a Internet.
+      - "${CDH_BIND:-127.0.0.1}:${CDH_PORT:-3000}:3000"
+
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Zona horaria del hotel: sella la fecha y hora de cada movimiento.
+      CDH_TZ: "${CDH_TZ:-America/Mexico_City}"
+      TZ: "${CDH_TZ:-America/Mexico_City}"
+      # Contraseña de los usuarios iniciales. Sólo se usa en el primer
+      # arranque, cuando se siembran las 155 habitaciones y los 7 usuarios.
+      CDH_SEED_PASSWORD: "${CDH_SEED_PASSWORD:?defina CDH_SEED_PASSWORD en .env antes de levantar el servicio}"
+
+    volumes:
+      # Base SQLite y fotografías. Sin este volumen se pierden al recrear.
+      - cdh-data:/app/data
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  cdh-data:
+    driver: local

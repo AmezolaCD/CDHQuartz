@@ -35,7 +35,7 @@ acceso). Se puede fijar otra con `CDH_SEED_PASSWORD` antes de sembrar.
 | `supervisor` | Supervisor | Opera todas las categorías |
 | `amadellaves` | Ama de Llaves | Sus campos |
 | `mantenimiento` | Mantenimiento | Sus campos |
-| `sistemas` | Sistemas | Sus campos |
+| `sistemas` | **Administrador** | **Usuario maestro: acceso completo** |
 | `recepcion` | Recepción | Consulta y observaciones autorizadas |
 
 ### Variables de entorno
@@ -49,6 +49,54 @@ acceso). Se puede fijar otra con `CDH_SEED_PASSWORD` antes de sembrar.
 | `CDH_SEED_PASSWORD` | `Quartz#2026` | Contraseña de los usuarios iniciales |
 
 ---
+
+## Despliegue con Docker
+
+```bash
+cp .env.example .env          # defina CDH_SEED_PASSWORD
+docker compose up -d --build  # http://127.0.0.1:3000
+```
+
+La imagen parte de `node:22-alpine`. `better-sqlite3` incluye binarios
+precompilados para musl, así que no hace falta cadena de compilación: la
+imagen final no lleva gcc, python ni node-gyp.
+
+| Aspecto | Cómo queda resuelto |
+|---|---|
+| Usuario | Corre como `node` (uid 1000); nada se ejecuta como root |
+| Persistencia | Volumen `cdh-data` en `/app/data`: base SQLite y fotografías |
+| Señales | `tini` como PID 1, para que `docker stop` termine ordenadamente |
+| Salud | `HEALTHCHECK` contra `/api/health` con el `fetch` nativo de Node 22 |
+| Exposición | Publica en `127.0.0.1` por defecto, para quedar tras un proxy inverso |
+
+### Variables
+
+| Variable | Por defecto | Descripción |
+|---|---|---|
+| `CDH_SEED_PASSWORD` | — | **Obligatoria.** Contraseña de los 7 usuarios iniciales; sólo se aplica en el primer arranque |
+| `CDH_TZ` | `America/Mexico_City` | Zona horaria que sella cada movimiento |
+| `CDH_PORT` | `3000` | Puerto publicado en el anfitrión |
+| `CDH_BIND` | `127.0.0.1` | Interfaz publicada; use `0.0.0.0` sólo si ya resolvió el HTTPS |
+
+### Notas de operación
+
+El primer arranque siembra las 155 habitaciones y los 7 usuarios; los
+siguientes detectan la base existente y no la tocan.
+
+Con un **bind mount** en lugar del volumen con nombre, el anfitrión impone la
+propiedad del directorio: hay que ceder `data/` al uid 1000
+(`sudo chown -R 1000:1000 ./data`) o el proceso no podrá escribir.
+
+Detrás de un proxy inverso, propague `X-Forwarded-Proto`: la aplicación ya
+tiene `trust proxy` y marca la cookie de sesión como `secure` cuando la
+petición llegó por HTTPS.
+
+Respaldo del estado completo:
+
+```bash
+docker run --rm -v cdhquartz_cdh-data:/data -v "$PWD:/backup" alpine \
+  tar czf /backup/cdh-$(date +%F).tar.gz -C /data .
+```
 
 ## Distribución real: 155 habitaciones en 9 pisos
 

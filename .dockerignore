@@ -1,0 +1,18 @@
+# Todo lo que no debe entrar en la imagen ni invalidar la caché de capas.
+node_modules
+npm-debug.log*
+
+# Datos de ejecución: la base SQLite y las fotografías viven en un volumen.
+data
+
+.git
+.github
+.gitignore
+test
+docs
+README.md
+Dockerfile
+.dockerignore
+docker-compose.yml
+.env
+.env.example
