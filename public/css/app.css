@@ -176,6 +176,33 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .search-wrap{position:relative;flex:0 1 270px;min-width:190px}
 .search-wrap svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-4)}
 .search-wrap input{padding-left:35px}
+
+/* Buscador de la barra superior: va sobre morado, así que el texto, el
+   marcador de posición, el icono y el cursor tienen que ser claros. Con los
+   colores de formulario por defecto quedaba gris sobre morado, ilegible. */
+.appbar .search-wrap svg{color:rgba(255,255,255,.8)}
+.appbar .search-wrap input{
+  background:rgba(255,255,255,.18);
+  border:1px solid rgba(255,255,255,.28);
+  color:#fff;
+  caret-color:#fff;
+  font-weight:500;
+}
+.appbar .search-wrap input::placeholder{color:rgba(255,255,255,.78);opacity:1}
+.appbar .search-wrap input:hover{background:rgba(255,255,255,.24)}
+.appbar .search-wrap input:focus{
+  background:rgba(255,255,255,.96);
+  border-color:#fff;
+  color:var(--ink);
+  caret-color:var(--plum-600);
+  box-shadow:0 0 0 3px rgba(255,255,255,.28);
+}
+.appbar .search-wrap input:focus::placeholder{color:var(--ink-3)}
+.appbar .search-wrap input:focus + svg,
+.appbar .search-wrap:focus-within svg{color:var(--plum-600)}
+/* La X nativa de <input type=search> es oscura y no se ve sobre el morado. */
+.appbar .search-wrap input::-webkit-search-cancel-button{filter:invert(1);opacity:.7;cursor:pointer}
+.appbar .search-wrap input:focus::-webkit-search-cancel-button{filter:none}
 .search-results{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:50;max-height:min(60vh,440px);overflow:auto;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-3);padding:6px}
 .search-results .sr-group{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-4);padding:8px 10px 4px}
