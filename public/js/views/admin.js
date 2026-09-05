@@ -85,13 +85,13 @@ async function roomsTab(box) {
     const active = items.filter((r) => r.active).length;
     body.innerHTML = `<table>
       <thead><tr><th>Habitación</th><th>Piso</th><th>Tipo</th><th>Estado</th>
-        <th>Posición</th><th>Movimientos</th><th>Activa</th><th></th></tr></thead>
+        <th>Posición</th><th>Movimientos</th><th>Activa</th><th>Acciones</th></tr></thead>
       <tbody>${items.map((r) => `<tr>
         <td class="bold mono">${esc(r.number)}</td><td>${esc(r.floor_name)}</td>
         <td>${esc(r.type_name ?? '—')}</td><td>${esc(r.status_name)}</td>
         <td class="tiny muted mono">fila ${r.grid_row} / col ${r.grid_col}</td>
         <td class="mono">${r.movements}</td><td>${activeChip(r.active)}</td>
-        <td><button class="btn sm ghost" data-edit="${r.id}">${icon('edit', 14)}</button></td>
+        <td><button class="btn sm" data-edit="${r.id}">${icon('edit', 13)} Editar</button></td>
       </tr>`).join('')}</tbody></table>`;
     $('.card-head p', box).textContent =
       `${active} activas de ${items.length} · objetivo ${state.hotel.targetRooms} · cuadrícula de ${gridColumns} columnas`;
@@ -162,12 +162,12 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
     const { items } = await api.get(`/api/admin/${path}`);
     body.dataset.items = JSON.stringify(items);
     body.innerHTML = items.length ? `<table>
-      <thead><tr>${columns.map((c) => `<th>${esc(c.header)}</th>`).join('')}<th></th></tr></thead>
+      <thead><tr>${columns.map((c) => `<th>${esc(c.header)}</th>`).join('')}<th>Acciones</th></tr></thead>
       <tbody>${items.map((it) => `<tr>
         ${columns.map((c) => `<td>${c.render ? c.render(it) : esc(it[c.key] ?? '—')}</td>`).join('')}
         <td style="white-space:nowrap">
-          <button class="btn sm ghost" data-edit="${it.id}">${icon('edit', 14)}</button>
-          ${it.active && !it.is_system ? `<button class="btn sm ghost" data-off="${it.id}" title="Desactivar">${icon('ban', 14)}</button>` : ''}
+          <button class="btn sm" data-edit="${it.id}">${icon('edit', 13)} Editar</button>
+          ${it.active && !it.is_system ? `<button class="btn sm ghost" data-off="${it.id}">${icon('ban', 13)} Desactivar</button>` : ''}
         </td></tr>`).join('')}</tbody></table>` : emptyState('Sin registros.');
   };
 
@@ -208,7 +208,8 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
 
 // ---------------------------------------------------------------- Usuarios
 async function usersTab(box) {
-  box.innerHTML = `${section('Usuarios', 'Roles, departamentos y acceso.',
+  box.innerHTML = `${section('Usuarios',
+    'Editar permite cambiar el correo y los datos de contacto, asignar rol y departamento, restablecer la contraseña y activar o desactivar el acceso.',
     '<button class="btn primary sm" data-new>' + icon('plus', 14) + ' Nuevo usuario</button>')}
     <div style="margin-top:16px">${section('Roles y permisos',
       'Cada permiso es independiente. Los cambios revocan las sesiones abiertas del rol.')}</div>`;
@@ -222,14 +223,14 @@ async function usersTab(box) {
     usersBox.dataset.items = JSON.stringify(items);
     usersBox.innerHTML = `<table>
       <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Departamento</th>
-        <th>Último acceso</th><th>Movs.</th><th>Estado</th><th></th></tr></thead>
+        <th>Último acceso</th><th>Movs.</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>${items.map((u) => `<tr>
         <td class="bold">${esc(u.username)}</td><td>${esc(u.full_name)}</td>
         <td><span class="chip plum tiny">${esc(u.role_name)}</span></td>
         <td>${esc(u.department_name ?? '—')}</td>
         <td class="tiny muted">${u.last_login_at ? new Date(u.last_login_at).toLocaleString('es-MX') : 'nunca'}</td>
         <td class="mono">${u.movements}</td><td>${activeChip(u.active)}</td>
-        <td><button class="btn sm ghost" data-edit-user="${u.id}">${icon('edit', 14)}</button></td>
+        <td><button class="btn sm" data-edit-user="${u.id}">${icon('edit', 13)} Editar</button></td>
       </tr>`).join('')}</tbody></table>`;
   };
 
@@ -238,7 +239,7 @@ async function usersTab(box) {
     rolesData = await api.get('/api/admin/roles');
     const groups = [...new Set(rolesData.permissions.map((p) => p.grp))];
     rolesBox.innerHTML = `<table>
-      <thead><tr><th>Rol</th><th>Alcance</th>${groups.map((g) => `<th>${esc(g)}</th>`).join('')}<th></th></tr></thead>
+      <thead><tr><th>Rol</th><th>Alcance</th>${groups.map((g) => `<th>${esc(g)}</th>`).join('')}<th>Acciones</th></tr></thead>
       <tbody>${rolesData.roles.map((r) => `<tr>
         <td><div class="bold">${esc(r.name)}</div><div class="tiny muted">${esc(r.description ?? '')}</div></td>
         <td>${r.department_scope
@@ -249,7 +250,7 @@ async function usersTab(box) {
           const have = rolesData.permissions.filter((p) => p.grp === g && r.permissions.includes(p.code)).length;
           return `<td class="mono tiny ${have ? '' : 'muted'}">${have}/${total}</td>`;
         }).join('')}
-        <td><button class="btn sm ghost" data-perms="${r.id}">${icon('shield', 14)}</button></td>
+        <td><button class="btn sm" data-perms="${r.id}">${icon('shield', 13)} Permisos</button></td>
       </tr>`).join('')}</tbody></table>`;
   };
 
@@ -262,9 +263,12 @@ async function usersTab(box) {
       options: rolesData.roles.filter((r) => r.active).map((r) => ({ value: r.id, label: r.name })) },
     { name: 'departmentId', label: 'Departamento', type: 'select', allowEmpty: true,
       options: state.departments.map((d) => ({ value: d.id, label: d.name })) },
-    { name: 'password', label: u ? 'Nueva contraseña (opcional)' : 'Contraseña', type: 'password',
-      required: !u, hint: 'Mínimo 8 caracteres.' },
-    { name: 'mustChangePassword', label: 'Obligar cambio en el próximo acceso', type: 'checkbox', default: true },
+    { name: 'password', label: u ? 'Restablecer contraseña' : 'Contraseña', type: 'password',
+      required: !u,
+      hint: u ? 'Escriba una contraseña nueva sólo si desea restablecerla; déjelo vacío para no cambiarla. Mínimo 8 caracteres.'
+              : 'Mínimo 8 caracteres.' },
+    { name: 'mustChangePassword', label: 'Obligar cambio en el próximo acceso', type: 'checkbox', default: true,
+      hint: 'Recomendado al restablecer: la persona define su propia contraseña al entrar.' },
     ...(u ? [{ name: 'active', label: 'Usuario activo', type: 'checkbox' }] : []),
   ];
 
