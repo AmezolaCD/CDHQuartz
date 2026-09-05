@@ -45,7 +45,7 @@ acceso). Se puede fijar otra con `CDH_SEED_PASSWORD` antes de sembrar.
 | `PORT` | `3000` | Puerto del servidor |
 | `CDH_DATA_DIR` | `./data` | Base de datos y fotografías |
 | `CDH_DB_FILE` | `./data/cdh.sqlite` | Ruta del archivo SQLite |
-| `CDH_TZ` | `America/Mexico_City` | Zona horaria inicial (después se administra desde la app) |
+| `CDH_TZ` | `America/Tijuana` | Zona horaria inicial (después se administra desde la app) |
 | `CDH_SEED_PASSWORD` | `Quartz#2026` | Contraseña de los usuarios iniciales |
 
 ---
@@ -74,7 +74,7 @@ imagen final no lleva gcc, python ni node-gyp.
 | Variable | Por defecto | Descripción |
 |---|---|---|
 | `CDH_SEED_PASSWORD` | — | **Obligatoria.** Contraseña de los 7 usuarios iniciales; sólo se aplica en el primer arranque |
-| `CDH_TZ` | `America/Mexico_City` | Zona horaria que sella cada movimiento |
+| `CDH_TZ` | `America/Tijuana` | Zona horaria que sella cada movimiento |
 | `CDH_PORT` | `3000` | Puerto publicado en el anfitrión |
 | `CDH_BIND` | `127.0.0.1` | Interfaz publicada; use `0.0.0.0` sólo si ya resolvió el HTTPS |
 

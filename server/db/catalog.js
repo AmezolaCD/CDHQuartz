@@ -171,7 +171,7 @@ export const GRID_COLUMNS = 19; // A..S
 export const SETTINGS = [
   { key:'hotel_name',        value:'Hotel Quartz',        label:'Nombre del hotel',            grp:'General', type:'text' },
   { key:'app_name',          value:'CDH',                 label:'Nombre del sistema',          grp:'General', type:'text' },
-  { key:'timezone',          value:'America/Mexico_City', label:'Zona horaria del hotel',      grp:'General', type:'timezone' },
+  { key:'timezone',          value:'America/Tijuana',     label:'Zona horaria del hotel',      grp:'General', type:'timezone' },
   { key:'target_room_count', value:'155',                 label:'Total de habitaciones objetivo', grp:'General', type:'number' },
   { key:'recurrence_window_days', value:'30',             label:'Ventana de reincidencia (días)', grp:'Operación', type:'number' },
   { key:'recurrence_thresholds',  value:'2,3,5,10',       label:'Umbrales de reincidencia',    grp:'Operación', type:'text' },
