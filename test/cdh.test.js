@@ -16,6 +16,7 @@ const { withPermissions, findUserByUsername } = await import('../server/lib/auth
 const { recordMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
 const { FLOOR_MAP } = await import('../server/db/catalog.js');
+const upgradeMod = await import('../server/db/upgrade.js');
 
 const user = (name) => withPermissions(findUserByUsername(name));
 
@@ -251,5 +252,82 @@ describe('Indicadores y atención', () => {
     assert.ok(m.department_name, 'QUÉ DEPARTAMENTO');
     assert.ok(m.comment, 'POR QUÉ');
     assert.ok(m.old_status_name && m.new_status_name, 'ANTES / DESPUÉS');
+  });
+});
+
+describe('Puesta al día del catálogo (npm run upgrade)', () => {
+  test('sobre una base ya al día no hace nada', () => {
+    const { upgrade } = upgradeMod;
+    assert.equal(upgrade({ quiet: true }).length, 0);
+  });
+
+  test('repone un campo faltante y lo siembra en todas las habitaciones', () => {
+    const { upgrade } = upgradeMod;
+    const field = one("SELECT id FROM fields WHERE code = 'cast'");
+    db.prepare('DELETE FROM room_details WHERE field_id = @id').run({ id: field.id });
+    db.prepare('DELETE FROM fields WHERE id = @id').run({ id: field.id });
+
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => /Cast/.test(a.detalle)), 'debe reponer el campo');
+
+    const rooms = one('SELECT COUNT(*) AS n FROM rooms').n;
+    const conCampo = one(`
+      SELECT COUNT(*) AS n FROM room_details rd
+        JOIN fields f ON f.id = rd.field_id WHERE f.code = 'cast'`).n;
+    assert.equal(conCampo, rooms, 'toda habitación existente recibe el campo nuevo');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('no sobrescribe lo que un administrador configuró', () => {
+    const { upgrade } = upgradeMod;
+    db.prepare("UPDATE room_statuses SET name = 'Lista para vender' WHERE code = 'DISPONIBLE'").run();
+    db.prepare("UPDATE settings SET value = '45' WHERE key = 'recurrence_window_days'").run();
+
+    upgrade({ quiet: true });
+
+    assert.equal(one("SELECT name FROM room_statuses WHERE code = 'DISPONIBLE'").name, 'Lista para vender');
+    assert.equal(one("SELECT value FROM settings WHERE key = 'recurrence_window_days'").value, '45');
+  });
+
+  test('la simulación no escribe nada', () => {
+    const { upgrade } = upgradeMod;
+    db.prepare("DELETE FROM settings WHERE key = 'max_photo_mb'").run();
+    const previstas = upgrade({ quiet: true, dryRun: true });
+    assert.ok(previstas.length > 0, 'debe anunciar el cambio');
+    assert.equal(one("SELECT COUNT(*) AS n FROM settings WHERE key = 'max_photo_mb'").n, 0,
+      'pero no haberlo escrito');
+    upgrade({ quiet: true });
+    assert.equal(one("SELECT COUNT(*) AS n FROM settings WHERE key = 'max_photo_mb'").n, 1);
+  });
+
+  test('cambia la zona horaria sin alterar los movimientos ya registrados', () => {
+    const { upgrade } = upgradeMod;
+    const antes = all('SELECT id, local_date, local_time, timezone FROM movements ORDER BY id');
+    assert.ok(antes.length > 0, 'la prueba necesita historial previo');
+
+    upgrade({ quiet: true, timezone: 'America/Tijuana' });
+    assert.equal(one("SELECT value FROM settings WHERE key = 'timezone'").value, 'America/Tijuana');
+
+    const despues = all('SELECT id, local_date, local_time, timezone FROM movements ORDER BY id');
+    assert.deepEqual(despues, antes, 'el historial conserva su propio sello temporal');
+  });
+
+  test('promueve a un usuario a Administrador y revoca sus sesiones', () => {
+    const { upgrade } = upgradeMod;
+    const sis = one("SELECT id FROM users WHERE username = 'sistemas'");
+    db.prepare("UPDATE users SET role_id = (SELECT id FROM roles WHERE code='SIS') WHERE id = @id")
+      .run({ id: sis.id });
+
+    upgrade({ quiet: true, promote: 'sistemas' });
+
+    const rol = one(`SELECT r.code FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = @id`, { id: sis.id });
+    assert.equal(rol.code, 'ADMIN');
+    assert.equal(one('SELECT COUNT(*) AS n FROM sessions WHERE user_id = @id AND revoked_at IS NULL', { id: sis.id }).n, 0);
+  });
+
+  test('rechaza una zona horaria inválida y un usuario inexistente', () => {
+    const { upgrade } = upgradeMod;
+    assert.throws(() => upgrade({ quiet: true, timezone: 'Marte/Olympus' }), /Zona horaria inválida/);
+    assert.throws(() => upgrade({ quiet: true, promote: 'nadie' }), /No existe el usuario/);
   });
 });

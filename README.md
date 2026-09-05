@@ -20,7 +20,29 @@ habitaciones. Para recargar desde cero:
 
 ```bash
 npm run reset && npm run seed
-npm test             # 25 pruebas: distribución, transacciones, inmutabilidad y permisos
+npm test             # 32 pruebas: distribución, transacciones, inmutabilidad, permisos y puesta al día
+```
+
+### Actualizar una instalación en uso
+
+`npm run reset` **borra los datos**. Para poner al día una base que ya está
+operando —tras un `git pull` que añade estados, campos o acciones nuevas— use:
+
+```bash
+npm run upgrade                  # añade lo que falte
+npm run upgrade -- --dry-run     # muestra el plan sin escribir nada
+```
+
+Sólo **añade**: nunca sobrescribe ni elimina, así que respeta lo que se haya
+configurado desde Administración (un estado renombrado, un umbral ajustado).
+Un campo nuevo se siembra además en todas las habitaciones ya existentes. El
+historial de movimientos no se toca, y cada ejecución queda en la bitácora.
+
+Dos opciones explícitas, porque cambian valores ya definidos:
+
+```bash
+npm run upgrade -- --timezone=America/Tijuana   # cambia la zona horaria del hotel
+npm run upgrade -- --promote=sistemas           # da rol Administrador (recuperación de acceso)
 ```
 
 ### Usuarios iniciales
