@@ -20,8 +20,22 @@ habitaciones. Para recargar desde cero:
 
 ```bash
 npm run reset && npm run seed
-npm test             # 32 pruebas: distribución, transacciones, inmutabilidad, permisos y puesta al día
+npm test             # 32 pruebas de servidor: distribución, transacciones, inmutabilidad, permisos y puesta al día
+npm run test:ui      # 9 pruebas en navegador: apilado de paneles, recorrido de operación y errores de consola
 ```
+
+### Windows: error de Visual Studio al instalar
+
+Si `npm ci` intenta compilar `better-sqlite3` con node-gyp y falla pidiendo
+Visual Studio, instale sin ejecutar scripts:
+
+```bash
+npm ci --ignore-scripts
+```
+
+El paquete incluye el binario ya compilado para Windows; npm lanza node-gyp
+sólo por la presencia de `binding.gyp`. Ninguna dependencia del proyecto
+necesita scripts de instalación.
 
 ### Actualizar una instalación en uso
 

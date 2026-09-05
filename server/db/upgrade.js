@@ -12,6 +12,7 @@
 // ============================================================================
 import { db, migrate, one, all, insert, transaction } from '../lib/db.js';
 import { audit } from '../lib/audit.js';
+import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
 import {
   DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
@@ -239,7 +240,7 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
 /** Señal interna para revertir la transacción en modo simulación. */
 class SimulacionTerminada extends Error {}
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (esEjecutadoDirectamente(import.meta.url)) {
   try {
     const opts = parseArgs(process.argv.slice(2));
     if (opts.help) { console.log(HELP); process.exit(0); }
