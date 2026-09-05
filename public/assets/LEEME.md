@@ -19,3 +19,15 @@ aparece en la pantalla de acceso y en la barra superior en cuanto se recarga.
 - Alto útil de unos 200 px o más si es PNG; el SVG no tiene ese límite.
 
 Si no hay ningún archivo, la interfaz usa la marca de texto «CDH».
+
+## Sobre `logo.png`
+
+El archivo actual se generó a partir del original del hotel
+(`quartz-01.jpg.jpeg`, JPEG CMYK de 3388x1047 y 1.1 MB, en el commit 565af34).
+Se le quitó el fondo blanco convirtiendo el brillo en canal alfa, se recortó
+el margen y se redujo a 320 px de alto: 47 KB, con el morado de la marca
+(#3e2b5a) tomado del propio archivo aplicando su perfil ICC.
+
+Para sustituirlo, basta con dejar otro `logo.*` en esta carpeta. Si es un JPEG
+con fondo blanco funcionará en la pantalla de acceso, pero en la barra
+superior se verá como un rectángulo: ahí hace falta transparencia.
