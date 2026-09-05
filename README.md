@@ -35,7 +35,7 @@ acceso). Se puede fijar otra con `CDH_SEED_PASSWORD` antes de sembrar.
 | `supervisor` | Supervisor | Opera todas las categorías |
 | `amadellaves` | Ama de Llaves | Sus campos |
 | `mantenimiento` | Mantenimiento | Sus campos |
-| `sistemas` | Sistemas | Sus campos |
+| `sistemas` | **Administrador** | **Usuario maestro: acceso completo** |
 | `recepcion` | Recepción | Consulta y observaciones autorizadas |
 
 ### Variables de entorno

@@ -70,10 +70,15 @@ export async function renderFloorMap(container, floorId, onRoomChange) {
       </div>
     </div>`;
 
-  container.addEventListener('click', (e) => {
+  // Esta función se vuelve a llamar al cambiar de piso y en cada refresco,
+  // siempre sobre el mismo contenedor. Se reemplaza el manejador anterior en
+  // lugar de sumar uno nuevo: acumularlos abría un panel por cada llamada.
+  if (container._onRoomClick) container.removeEventListener('click', container._onRoomClick);
+  container._onRoomClick = (e) => {
     const b = e.target.closest('[data-room]');
     if (b) openRoom(Number(b.dataset.room), { onChange: onRoomChange });
-  });
+  };
+  container.addEventListener('click', container._onRoomClick);
   return data;
 }
 

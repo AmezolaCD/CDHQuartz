@@ -14,7 +14,9 @@ const SEED_USERS = [
   { username:'supervisor',  full_name:'Supervisor de Piso',     role:'SUPERVISOR', dept:'SUPERVISION' },
   { username:'amadellaves', full_name:'Jefa de Ama de Llaves',  role:'AMA',        dept:'AMA' },
   { username:'mantenimiento', full_name:'Jefe de Mantenimiento',role:'MTTO',       dept:'MTTO' },
-  { username:'sistemas',    full_name:'Encargado de Sistemas',  role:'SIS',        dept:'SIS' },
+  // Usuario maestro: acceso completo. Conserva el departamento Sistemas para
+  // que sus movimientos se sigan atribuyendo a esa área en el historial.
+  { username:'sistemas',    full_name:'Encargado de Sistemas',  role:'ADMIN',      dept:'SIS' },
   { username:'recepcion',   full_name:'Recepción Turno A',      role:'RECEPCION',  dept:'RECEPCION' },
 ];
 
