@@ -29,6 +29,14 @@ export async function render() {
   const route = parseHash();
   const view = routes.get(route.path) ?? routes.get('inicio');
   current = route;
+
+  // Cada vista registra sus propios manejadores sobre el outlet, que es el
+  // mismo nodo en toda la sesión. Vaciar el HTML no los quita: se sustituye
+  // el nodo por uno limpio para que no se acumulen entre navegaciones.
+  const fresh = outlet.cloneNode(false);
+  outlet.replaceWith(fresh);
+  outlet = fresh;
+
   outlet.innerHTML = '<div class="loading"><div class="spinner dark"></div></div>';
   try {
     await view(outlet, route);

@@ -20,8 +20,8 @@ services:
       NODE_ENV: production
       PORT: "3000"
       # Zona horaria del hotel: sella la fecha y hora de cada movimiento.
-      CDH_TZ: "${CDH_TZ:-America/Mexico_City}"
-      TZ: "${CDH_TZ:-America/Mexico_City}"
+      CDH_TZ: "${CDH_TZ:-America/Tijuana}"
+      TZ: "${CDH_TZ:-America/Tijuana}"
       # Contraseña de los usuarios iniciales. Sólo se usa en el primer
       # arranque, cuando se siembran las 155 habitaciones y los 7 usuarios.
       CDH_SEED_PASSWORD: "${CDH_SEED_PASSWORD:?defina CDH_SEED_PASSWORD en .env antes de levantar el servicio}"

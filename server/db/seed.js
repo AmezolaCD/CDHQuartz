@@ -150,6 +150,6 @@ export function seed({ quiet = false } = {}) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  setTimezone(process.env.CDH_TZ || 'America/Mexico_City');
+  setTimezone(process.env.CDH_TZ || 'America/Tijuana');
   seed();
 }

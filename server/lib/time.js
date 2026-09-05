@@ -1,7 +1,7 @@
 // Sello de tiempo del SERVIDOR. Nunca se confía en el reloj del navegador.
 // La zona horaria del hotel es configurable (settings.timezone).
 
-let currentTimezone = process.env.CDH_TZ || 'America/Mexico_City';
+let currentTimezone = process.env.CDH_TZ || 'America/Tijuana';
 
 export function setTimezone(tz) {
   if (!tz) return;
