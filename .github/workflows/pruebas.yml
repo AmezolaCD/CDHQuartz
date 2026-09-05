@@ -111,3 +111,38 @@ jobs:
             playwright-report/
           if-no-files-found: ignore
           retention-days: 7
+
+  windows:
+    name: Windows (Node 22)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas automatizadas
+        run: npm test
+
+      - name: Los scripts de línea de comandos deben ejecutarse de verdad
+        # En Windows las rutas llevan barras invertidas y letra de unidad. Un
+        # guardián de "módulo principal" mal escrito hace que el script
+        # termine en silencio, sin ejecutar nada y sin error, así que aquí se
+        # exige salida real en lugar de conformarse con el código de salida.
+        shell: pwsh
+        env:
+          CDH_DATA_DIR: ${{ runner.temp }}\cdh-win
+          CDH_SEED_PASSWORD: Windows#Prueba2026
+        run: |
+          $seed = npm run seed --silent | Out-String
+          Write-Host $seed
+          if ($seed -notmatch '\[seed\]') { throw "seed.js no imprimió nada: no llegó a ejecutarse" }
+          $up = npm run upgrade --silent | Out-String
+          Write-Host $up
+          if ($up -notmatch '\[upgrade\]') { throw "upgrade.js no imprimió nada: no llegó a ejecutarse" }

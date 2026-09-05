@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { db, migrate, insert, one, transaction } from '../lib/db.js';
+import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { stamp, setTimezone } from '../lib/time.js';
 import {
   DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
@@ -149,7 +150,7 @@ export function seed({ quiet = false } = {}) {
   return summary;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (esEjecutadoDirectamente(import.meta.url)) {
   setTimezone(process.env.CDH_TZ || 'America/Tijuana');
   seed();
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import childProcess from 'node:child_process';
 
 // Base de datos aislada por corrida.
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-test-'));
@@ -329,5 +330,53 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     const { upgrade } = upgradeMod;
     assert.throws(() => upgrade({ quiet: true, timezone: 'Marte/Olympus' }), /Zona horaria inválida/);
     assert.throws(() => upgrade({ quiet: true, promote: 'nadie' }), /No existe el usuario/);
+  });
+});
+
+describe('Scripts de línea de comandos', () => {
+  // Un script que no arranca no falla: termina en silencio. Estas pruebas
+  // exigen salida real, porque el guardián de "módulo principal" se rompió
+  // en Windows y `npm run seed`/`upgrade` no hacían nada sin avisar.
+  const { spawnSync } = childProcess;
+  const correr = (script, args = []) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-cli-'));
+    // CDH_DB_FILE lo fija esta misma suite y apunta a su base ya sembrada:
+    // hay que quitarlo para que el hijo use su directorio temporal.
+    const { CDH_DB_FILE, ...limpio } = process.env;
+    const r = spawnSync(process.execPath, [path.join('server', 'db', script), ...args], {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      encoding: 'utf8',
+      env: { ...limpio, CDH_DATA_DIR: dir, CDH_SEED_PASSWORD: 'Cli#Prueba2026' },
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    return r;
+  };
+
+  test('seed.js imprime lo que hizo', () => {
+    const r = correr('seed.js');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /\[seed\]/, 'debe informar; el silencio significa que no se ejecutó');
+    assert.match(r.stdout, /155/);
+  });
+
+  test('upgrade.js imprime lo que hizo', () => {
+    const r = correr('upgrade.js');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /\[upgrade\]/, 'debe informar; el silencio significa que no se ejecutó');
+  });
+
+  test('upgrade.js rechaza una opción desconocida con código distinto de 0', () => {
+    const r = correr('upgrade.js', ['--inventada']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /Opción desconocida/);
+  });
+
+  test('el guardián de módulo principal no depende del formato de ruta', async () => {
+    const { esEjecutadoDirectamente } = await import('../server/lib/cli.js');
+    const { pathToFileURL } = await import('node:url');
+    const propio = path.resolve(import.meta.dirname, '..', 'server', 'db', 'upgrade.js');
+    assert.equal(esEjecutadoDirectamente(pathToFileURL(propio).href, propio), true);
+    assert.equal(esEjecutadoDirectamente('file:///otra/cosa.js', propio), false);
+    assert.equal(esEjecutadoDirectamente('file:///x.js', undefined), false);
   });
 });
