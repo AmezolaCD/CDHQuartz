@@ -100,7 +100,10 @@ export function recordMovement({
               WHERE mt.code = @code AND mt.active = 1`, { code: movementTypeCode })
       : null;
     if (movementTypeCode && !mtype) throw new MovementError(`Tipo de movimiento desconocido: ${movementTypeCode}`, 400);
-    if (mtype && !canWriteCategory(user, mtype.category_department_id)) {
+    // Un reporte se levanta HACIA otra área: Ama de Llaves debe poder avisar a
+    // Mantenimiento o a Sistemas. Iniciar o cerrar el trabajo sigue siendo del
+    // área responsable, y eso sí respeta el alcance por departamento.
+    if (mtype && !mtype.cross_department && !canWriteCategory(user, mtype.category_department_id)) {
       throw new MovementError(`Su rol no puede registrar movimientos de la categoría ${mtype.category_name}.`, 403);
     }
     if (mtype?.requires_comment && !String(comment ?? '').trim()) {
@@ -269,17 +272,20 @@ export function recordMovement({
 
     // ---------------------------------------------- 5. Notificaciones
     const finalStatus = newStatus ?? { code: room.status_code, name: room.status_name };
-    if (notifySeverity) {
+    const pideAviso = !!mtype?.notify || !!notifySeverity;
+    if (pideAviso) {
       const isBlocked = ['BLOQUEADA', 'FUERA_SERVICIO'].includes(finalStatus.code);
-      const wanted =
-        (notifySeverity === 'critica' && getSettingBool('notify_critical', true)) ||
-        (isBlocked && getSettingBool('notify_blocked', true)) ||
-        (mtype?.category_code === 'MTTO' && getSettingBool('notify_maintenance', true)) ||
-        notifySeverity === 'alta';
-      if (wanted) {
-        insert('notifications', {
+      const severidad = notifySeverity ?? mtype?.severity ?? 'normal';
+      // Los interruptores de configuración sólo silencian; no habilitan.
+      const silenciado =
+        (severidad === 'critica' && !getSettingBool('notify_critical', true)) ||
+        (isBlocked && !getSettingBool('notify_blocked', true)) ||
+        (mtype?.category_code === 'MTTO' && !getSettingBool('notify_maintenance', true));
+
+      if (!silenciado) {
+        const notifId = insert('notifications', {
           type: mtype?.code ?? 'INCIDENCIA',
-          severity: notifySeverity,
+          severity: severidad,
           title: `${room.number} — ${mtype?.name ?? 'Incidencia registrada'}`,
           body: baseRow.comment ?? `Estado: ${finalStatus.name}`,
           room_id: room.id,
@@ -289,6 +295,20 @@ export function recordMovement({
           created_at: t.iso,
           created_epoch: t.epoch,
         });
+
+        // Destinatarios: el departamento al que se dirige el reporte y, si así
+        // está configurado, siempre una copia a Ama de Llaves, que coordina el
+        // piso y necesita saber tanto la apertura como el cierre.
+        const destinos = new Set();
+        if (mtype?.category_department_id) destinos.add(mtype.category_department_id);
+        else if (user.department_id) destinos.add(user.department_id);
+        if (getSettingBool('notify_housekeeping_copy', true)) {
+          const ama = one("SELECT id FROM departments WHERE code = 'AMA' AND active = 1");
+          if (ama) destinos.add(ama.id);
+        }
+        for (const departamento of destinos) {
+          insert('notification_recipients', { notification_id: notifId, department_id: departamento });
+        }
       }
     }
 

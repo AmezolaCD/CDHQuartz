@@ -188,6 +188,9 @@ CREATE TABLE IF NOT EXISTS movement_types (
   requires_photo    INTEGER NOT NULL DEFAULT 0,
   allows_photo      INTEGER NOT NULL DEFAULT 1,
   is_quick_action   INTEGER NOT NULL DEFAULT 0,
+  -- Un reporte se levanta HACIA otra área: cualquier departamento puede
+  -- abrirlo. Iniciar o cerrar el trabajo sigue siendo del área responsable.
+  cross_department  INTEGER NOT NULL DEFAULT 0,
   notify            INTEGER NOT NULL DEFAULT 0,
   sort_order        INTEGER NOT NULL DEFAULT 0,
   is_system         INTEGER NOT NULL DEFAULT 0,
@@ -310,6 +313,15 @@ CREATE TABLE IF NOT EXISTS notifications (
   resolved_by   INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS ix_notif_epoch ON notifications(created_epoch DESC);
+
+-- Departamentos a los que va dirigida una notificación. Sin filas, la
+-- notificación es general y la ve cualquiera con permiso de atenderlas.
+CREATE TABLE IF NOT EXISTS notification_recipients (
+  notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  department_id   INTEGER NOT NULL REFERENCES departments(id),
+  PRIMARY KEY (notification_id, department_id)
+);
+CREATE INDEX IF NOT EXISTS ix_notif_dest ON notification_recipients(department_id);
 
 CREATE TABLE IF NOT EXISTS notification_reads (
   notification_id INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,

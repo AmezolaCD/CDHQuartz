@@ -12,7 +12,8 @@ process.env.CDH_DB_FILE = path.join(TMP, 'test.sqlite');
 
 const { db, one, all } = await import('../server/lib/db.js');
 const { seed } = await import('../server/db/seed.js');
-const { loadSettings } = await import('../server/lib/settings.js');
+const settingsMod = await import('../server/lib/settings.js');
+const { loadSettings } = settingsMod;
 const { withPermissions, findUserByUsername } = await import('../server/lib/auth.js');
 const { recordMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
@@ -378,5 +379,75 @@ describe('Scripts de línea de comandos', () => {
     assert.equal(esEjecutadoDirectamente(pathToFileURL(propio).href, propio), true);
     assert.equal(esEjecutadoDirectamente('file:///otra/cosa.js', propio), false);
     assert.equal(esEjecutadoDirectamente('file:///x.js', undefined), false);
+  });
+});
+
+describe('Reportes entre departamentos y notificaciones dirigidas', () => {
+  const depto = (code) => one('SELECT id FROM departments WHERE code = @code', { code }).id;
+  const destinatarios = (notifId) => all(`
+    SELECT d.code FROM notification_recipients r
+      JOIN departments d ON d.id = r.department_id
+     WHERE r.notification_id = @id ORDER BY d.code`, { id: notifId }).map((x) => x.code);
+
+  test('Ama de Llaves puede reportar a Sistemas, aunque no sea su área', () => {
+    const room = getRoomByNumber('714');
+    const res = recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
+      comment: 'La TV no da señal.',
+    });
+    assert.equal(res.room.status_code, 'SIS_PENDIENTE');
+  });
+
+  test('pero no puede cerrar el trabajo de Sistemas', () => {
+    const room = getRoomByNumber('715');
+    assert.throws(
+      () => recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_DONE' }),
+      (e) => e.status === 403);
+  });
+
+  test('el reporte avisa al área destino y a Ama de Llaves', () => {
+    const room = getRoomByNumber('716');
+    const res = recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
+      comment: 'El panel táctil no responde.',
+    });
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
+    assert.ok(n, 'debe generarse una notificación');
+    assert.deepEqual(destinatarios(n.id), ['AMA', 'SIS']);
+  });
+
+  test('el cierre también avisa a ambos', () => {
+    const room = getRoomByNumber('717');
+    recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT', comment: 'WiFi caído.' });
+    const res = recordMovement({
+      roomId: room.id, user: user('sistemas'), movementTypeCode: 'SYS_DONE',
+      comment: 'Punto de acceso reiniciado.',
+    });
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
+    assert.ok(n, 'completar también debe notificar');
+    assert.deepEqual(destinatarios(n.id), ['AMA', 'SIS']);
+  });
+
+  test('un reporte de mantenimiento avisa a Mantenimiento y a Ama de Llaves', () => {
+    const room = getRoomByNumber('718');
+    const res = recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT',
+      comment: 'Fuga en el lavabo.',
+    });
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
+    assert.deepEqual(destinatarios(n.id), ['AMA', 'MTTO']);
+  });
+
+  test('la copia a Ama de Llaves es configurable', () => {
+    const { setSettingValue } = settingsMod;
+    setSettingValue('notify_housekeeping_copy', '0', null);
+    const room = getRoomByNumber('719');
+    const res = recordMovement({
+      roomId: room.id, user: user('sistemas'), movementTypeCode: 'SYS_REPORT',
+      comment: 'Extensión sin tono.',
+    });
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
+    assert.deepEqual(destinatarios(n.id), ['SIS'], 'sin copia, sólo el área destino');
+    setSettingValue('notify_housekeeping_copy', '1', null);
   });
 });

@@ -37,7 +37,10 @@ function appShell() {
   const shell = el(`
     <div>
       <header class="appbar">
-        <div class="brand">${icon('layers', 22)}
+        <div class="brand">
+          ${state.hotel.logo
+            ? `<img class="brand-logo" src="${esc(state.hotel.logo)}" alt="${esc(state.hotel.name)}">`
+            : icon('layers', 22)}
           <div>CDH<small>${esc(state.hotel.name)}</small></div></div>
         <nav>${nav.map((n) => `<button data-nav="${n.path}" title="${esc(n.label)}" aria-label="${esc(n.label)}">${icon(n.icon, 16)}<span>${esc(n.label)}</span></button>`).join('')}</nav>
         <div class="spacer"></div>

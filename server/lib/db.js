@@ -17,9 +17,33 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 
+/**
+ * Columnas añadidas después de la primera versión del esquema.
+ * `backfill` se ejecuta una sola vez, justo al crear la columna: como hasta
+ * ese momento no existía, nadie pudo configurarla y poner el valor previsto
+ * no pisa ninguna decisión del administrador.
+ */
+const COLUMNAS_NUEVAS = [
+  {
+    table: 'movement_types',
+    column: 'cross_department',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    backfill: "UPDATE movement_types SET cross_department = 1 WHERE code IN ('MAINT_REPORT', 'SYS_REPORT')",
+  },
+];
+
 export function migrate() {
   const schema = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
   db.exec(schema);
+  // CREATE TABLE IF NOT EXISTS no añade columnas a una tabla que ya existe:
+  // las bases en uso necesitan este paso para no quedarse atrás.
+  for (const c of COLUMNAS_NUEVAS) {
+    const existe = db.prepare(`PRAGMA table_info(${c.table})`).all().some((r) => r.name === c.column);
+    if (!existe) {
+      db.exec(`ALTER TABLE ${c.table} ADD COLUMN ${c.column} ${c.ddl}`);
+      if (c.backfill) db.exec(c.backfill);
+    }
+  }
 }
 
 /**

@@ -24,6 +24,14 @@ npm test             # 32 pruebas de servidor: distribución, transacciones, inm
 npm run test:ui      # 9 pruebas en navegador: apilado de paneles, recorrido de operación y errores de consola
 ```
 
+### Logo del hotel
+
+Deje el archivo en `public/assets/logo.svg` (o `.png`, `.webp`, `.jpg`) y la
+interfaz lo usa en la pantalla de acceso y en la barra superior. El servidor
+lo detecta solo: no hay que reiniciar ni configurar nada. Conviene que sea
+monocromo y con fondo transparente, porque en la barra se invierte a blanco.
+Sin archivo, se muestra la marca de texto «CDH».
+
 ### Windows: error de Visual Studio al instalar
 
 Si `npm ci` intenta compilar `better-sqlite3` con node-gyp y falla pidiendo

@@ -6,9 +6,9 @@ export function loginView(onSuccess) {
   const node = el(`
     <div class="login-page">
       <div class="login-card">
-        <div class="logo">CDH</div>
+        <div data-marca></div>
         <h1>Control de Detalles por Habitación</h1>
-        <p class="sub">Hotel Quartz · Expediente digital y auditable de cada habitación.</p>
+        <p class="sub">Expediente digital y auditable de cada habitación.</p>
         <div data-error hidden></div>
         <form id="loginForm" autocomplete="on">
           <div class="field"><label for="u">Usuario</label>
@@ -22,6 +22,14 @@ export function loginView(onSuccess) {
         </p>
       </div>
     </div>`);
+
+  // El logo se consulta antes de iniciar sesión: la pantalla de acceso es lo
+  // primero que ve el personal y debe llevar la marca del hotel.
+  fetch('/api/bootstrap/logo').then((r) => r.json()).then(({ logo, hotel }) => {
+    $('[data-marca]', node).innerHTML = logo
+      ? `<img class="login-logo" src="${esc(logo)}" alt="${esc(hotel)}">`
+      : `<div class="logo">CDH</div>`;
+  }).catch(() => { $('[data-marca]', node).innerHTML = '<div class="logo">CDH</div>'; });
 
   const errBox = $('[data-error]', node);
   $('#loginForm', node).addEventListener('submit', async (e) => {
