@@ -47,7 +47,7 @@ function appShell() {
         <div class="search-wrap hide-sm">
           ${icon('search', 16)}
           <input type="search" id="globalSearch" placeholder="Buscar habitación, piso o incidencia…"
-                 autocomplete="off" aria-label="Buscar" style="background:rgba(255,255,255,.16);border-color:transparent;color:#fff">
+                 autocomplete="off" aria-label="Buscar">
           <div class="search-results" hidden></div>
         </div>
         <button class="icon-btn" data-notif aria-label="Notificaciones">${icon('bell', 19)}<span class="badge-dot" hidden></span></button>
