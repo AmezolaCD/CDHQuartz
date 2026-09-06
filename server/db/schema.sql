@@ -187,6 +187,10 @@ CREATE TABLE IF NOT EXISTS movement_types (
   severity          TEXT NOT NULL DEFAULT 'normal', -- normal|alta|critica
   is_incident       INTEGER NOT NULL DEFAULT 0,
   closes_incident   INTEGER NOT NULL DEFAULT 0,
+  -- Alcance del cierre: 'categoria' cierra lo pendiente de su propia área
+  -- ("Mantenimiento completado" no cierra un reporte a Sistemas);
+  -- 'habitacion' cierra todo lo pendiente de la habitación ("Liberar").
+  closes_scope      TEXT NOT NULL DEFAULT 'categoria',
   requires_comment  INTEGER NOT NULL DEFAULT 0,
   requires_photo    INTEGER NOT NULL DEFAULT 0,
   allows_photo      INTEGER NOT NULL DEFAULT 1,

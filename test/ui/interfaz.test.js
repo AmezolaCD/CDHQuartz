@@ -245,6 +245,35 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('un reporte a Sistemas se ve en el indicador, en la lista y en el expediente', async () => {
+    const { page } = await abrirSesion('amadellaves');
+    const indicador = () => page.locator('.kpi', { hasText: 'Incidencias abiertas' }).locator('.n').textContent();
+    const antes = Number(await indicador());
+
+    await page.locator('.room').first().click();
+    await page.waitForSelector('.drawer.open');
+    const numero = (await page.locator('.drawer h2').textContent()).replace(/\D/g, '');
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.fill('#actionForm [name=comment]', 'Televisión sin señal en el canal 5.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(1200);
+
+    // El expediente dice CUÁL es la incidencia, no sólo cuántas hay.
+    await page.locator('.drawer [data-tab="detalle"]').click();
+    await page.waitForSelector('.open-incidents');
+    assert.match(await page.locator('.open-incidents').textContent(), /Televisión sin señal/);
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(1200);
+    assert.equal(Number(await indicador()), antes + 1, 'el reporte debe sumar en "Incidencias abiertas"');
+    assert.match(await page.locator('[data-attention]').textContent(), new RegExp(numero));
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
     for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {

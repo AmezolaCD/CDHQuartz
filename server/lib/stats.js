@@ -7,7 +7,7 @@ import { localDate, periodRange } from './time.js';
 const OPEN_INCIDENTS_SQL = `
   SELECT rd.room_id, f.id AS field_id, f.label AS field_label, rd.value,
          c.code AS category_code, c.name AS category_name,
-         c.department_id, rd.updated_at
+         c.department_id, rd.updated_at, 'campo' AS source
     FROM room_details rd
     JOIN fields f ON f.id = rd.field_id AND f.active = 1
     JOIN categories c ON c.id = f.category_id AND c.active = 1
@@ -16,8 +16,51 @@ const OPEN_INCIDENTS_SQL = `
      AND rd.value IS NOT NULL
      AND EXISTS (SELECT 1 FROM json_each(f.is_incident_when) j WHERE j.value = rd.value)`;
 
+/**
+ * Una incidencia también queda ABIERTA cuando una acción la levantó —un
+ * reporte a Mantenimiento o a Sistemas, un daño, un bloqueo— y nada posterior
+ * la cerró. Se cierra de tres maneras, todas ellas un movimiento del
+ * historial, nunca un borrado:
+ *
+ *   · una acción de cierre de su misma área ("Mantenimiento completado");
+ *   · una acción de cierre de alcance `habitacion` ("Liberar habitación"),
+ *     que resuelve todo lo pendiente de esa habitación;
+ *   · un cambio de estado que devuelve la habitación al servicio (cualquier
+ *     estado marcado con `counts_ready`): si volvió a estar lista, no queda
+ *     nada pendiente que contar.
+ *
+ * Los movimientos de campo se excluyen: el valor actual del campo ya los
+ * representa en la consulta anterior, y contarlos aquí sería contarlos dos
+ * veces.
+ */
+const OPEN_REPORT_INCIDENTS_SQL = `
+  SELECT m.room_id, NULL AS field_id,
+         m.action AS field_label,
+         substr(COALESCE(NULLIF(TRIM(m.comment), ''), m.new_status_name), 1, 80) AS value,
+         cat.code AS category_code, m.category_name,
+         cat.department_id, m.created_at AS updated_at,
+         m.id AS movement_id, m.severity, 'reporte' AS source
+    FROM movements m
+    JOIN rooms r ON r.id = m.room_id AND r.active = 1
+    LEFT JOIN categories cat ON cat.id = m.category_id
+   WHERE m.is_incident = 1
+     AND m.field_id IS NULL
+     AND NOT EXISTS (
+       SELECT 1
+         FROM movements x
+         LEFT JOIN movement_types xt ON xt.id = x.movement_type_id
+         LEFT JOIN room_statuses xs ON xs.id = x.new_status_id
+        WHERE x.room_id = m.room_id
+          AND x.id > m.id
+          AND (
+            (x.closes_incident = 1
+              AND (COALESCE(xt.closes_scope, 'categoria') = 'habitacion'
+                   OR x.category_id IS m.category_id))
+            OR (x.new_status_id IS NOT x.old_status_id AND xs.counts_ready = 1)
+          ))`;
+
 export function openIncidents() {
-  return all(OPEN_INCIDENTS_SQL);
+  return [...all(OPEN_INCIDENTS_SQL), ...all(OPEN_REPORT_INCIDENTS_SQL)];
 }
 
 export function openIncidentsByRoom() {
@@ -213,13 +256,16 @@ export function attention({ limit = 60 } = {}) {
 
     const inc = incidents.get(r.id) ?? [];
     if (inc.length) {
+      // Un reporte se etiqueta por su área y su motivo: repetir el nombre de
+      // la acción sería repetir lo que ya dice el estado de la habitación.
+      const etiqueta = (i) => (i.source === 'reporte'
+        ? `${i.category_name ?? 'General'}: ${i.value}`
+        : `Incidencia: ${i.field_label} — ${i.value}`);
       reasons.push({
         code: 'incidencia',
-        label: inc.length === 1
-          ? `Incidencia: ${inc[0].field_label} — ${inc[0].value}`
-          : `${inc.length} incidencias abiertas`,
+        label: inc.length === 1 ? etiqueta(inc[0]) : `${inc.length} incidencias abiertas`,
         weight: 3,
-        detail: inc.map((i) => `${i.field_label}: ${i.value}`),
+        detail: inc.map(etiqueta),
       });
     }
     const rr = recByRoom.get(r.id);
