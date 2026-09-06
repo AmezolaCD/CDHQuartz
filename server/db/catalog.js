@@ -67,21 +67,25 @@ export const ROLES = [
     permissions: ['room.view','history.view'] },
 ];
 
+// `counts_attention` decide si el estado entra en "Requiere atención";
+// `attention_weight` decide qué tan arriba aparece (bloqueo > trabajo
+// pendiente > inspección). Un estado nuevo con counts_attention = 1 aparece
+// en la lista sin tocar una sola línea de código.
 export const ROOM_STATUSES = [
   { code:'DISPONIBLE',           name:'Disponible',            icon:'check-circle', color:'#16a34a', counts_ready:1 },
   { code:'OCUPADA',              name:'Ocupada',               icon:'user',         color:'#2563eb' },
   { code:'VACIA',                name:'Vacía',                 icon:'door',         color:'#64748b', counts_pending:1 },
   { code:'EN_LIMPIEZA',          name:'En limpieza',           icon:'spray',        color:'#0891b2', counts_cleaning:1 },
   { code:'LIMPIEZA_TERMINADA',   name:'Limpieza terminada',    icon:'sparkles',     color:'#06b6d4', counts_pending:1 },
-  { code:'INSPECCION_PENDIENTE', name:'Inspección pendiente',  icon:'clipboard',    color:'#d97706', counts_pending:1, counts_attention:1 },
+  { code:'INSPECCION_PENDIENTE', name:'Inspección pendiente',  icon:'clipboard',    color:'#d97706', counts_pending:1, counts_attention:1, attention_weight:2 },
   { code:'INSPECCIONADA',        name:'Inspeccionada',         icon:'shield-check', color:'#15803d', counts_ready:1 },
-  { code:'MANT_PENDIENTE',       name:'Mantenimiento pendiente',icon:'wrench',      color:'#f59e0b', counts_maintenance:1, counts_pending:1, counts_attention:1 },
+  { code:'MANT_PENDIENTE',       name:'Mantenimiento pendiente',icon:'wrench',      color:'#f59e0b', counts_maintenance:1, counts_pending:1, counts_attention:1, attention_weight:3 },
   { code:'EN_MANTENIMIENTO',     name:'En mantenimiento',      icon:'tool',         color:'#ea580c', counts_maintenance:1 },
-  { code:'SIS_PENDIENTE',        name:'Sistemas pendiente',    icon:'wifi',         color:'#0284c7', counts_pending:1, counts_attention:1 },
+  { code:'SIS_PENDIENTE',        name:'Sistemas pendiente',    icon:'wifi',         color:'#0284c7', counts_pending:1, counts_attention:1, attention_weight:3 },
   { code:'EN_SISTEMAS',          name:'En atención de Sistemas', icon:'wifi',       color:'#0369a1' },
-  { code:'FUERA_SERVICIO',       name:'Fuera de servicio',     icon:'ban',          color:'#b91c1c', counts_blocked:1, counts_attention:1 },
-  { code:'BLOQUEADA',            name:'Bloqueada',             icon:'lock',         color:'#7f1d1d', counts_blocked:1, counts_attention:1 },
-  { code:'REQUIERE_ATENCION',    name:'Requiere atención',     icon:'alert',        color:'#dc2626', counts_attention:1, counts_pending:1 },
+  { code:'FUERA_SERVICIO',       name:'Fuera de servicio',     icon:'ban',          color:'#b91c1c', counts_blocked:1, counts_attention:1, attention_weight:4 },
+  { code:'BLOQUEADA',            name:'Bloqueada',             icon:'lock',         color:'#7f1d1d', counts_blocked:1, counts_attention:1, attention_weight:4 },
+  { code:'REQUIERE_ATENCION',    name:'Requiere atención',     icon:'alert',        color:'#dc2626', counts_attention:1, counts_pending:1, attention_weight:4 },
 ];
 
 const EST_MTTO   = ['OK','Requiere revisión','Falla','Fuera de servicio'];
@@ -181,6 +185,7 @@ export const SETTINGS = [
   { key:'recurrence_window_days', value:'30',             label:'Ventana de reincidencia (días)', grp:'Operación', type:'number' },
   { key:'recurrence_thresholds',  value:'2,3,5,10',       label:'Umbrales de reincidencia',    grp:'Operación', type:'text' },
   { key:'activity_feed_size',     value:'25',             label:'Movimientos en actividad reciente', grp:'Operación', type:'number' },
+  { key:'bulk_max_rooms',         value:'40',             label:'Máximo de habitaciones por cambio en bloque', grp:'Operación', type:'number' },
   { key:'notify_critical',        value:'1',              label:'Notificar incidencias críticas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_blocked',         value:'1',              label:'Notificar habitaciones bloqueadas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_maintenance',     value:'1',              label:'Notificar mantenimiento crítico', grp:'Notificaciones', type:'boolean' },

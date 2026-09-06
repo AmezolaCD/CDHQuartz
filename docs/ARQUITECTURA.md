@@ -47,6 +47,21 @@ Los movimientos de un mismo guardado comparten `batch_id`, lo que permite
 distinguir un **evento** de las **filas** que generó — la base de un conteo de
 reincidencia correcto.
 
+### Cambios en bloque
+
+`recordBulkMovement()` no es una segunda puerta de escritura: llama a
+`recordMovement()` una vez por habitación, de modo que cada una conserva su
+propio movimiento, su historial y su notificación. Lo que agrega es envolver
+las N operaciones en **una sola transacción**: si una falla, ninguna queda
+registrada, y el error nombra la habitación que lo provocó. El lote comparte
+`bulk_id` en una entrada de auditoría propia, que guarda el estado anterior y
+el posterior de cada habitación.
+
+Las habitaciones que ya estaban en el estado destino se **omiten** en vez de
+abortar el lote: seleccionar un piso completo y marcar «Limpieza terminada» no
+debe fallar porque tres ya lo estuvieran. Las fotografías no viajan en bloque:
+son evidencia de una habitación concreta.
+
 ## Estado actual vs. historial
 
 | | Tabla | Se modifica | Se borra |
@@ -65,6 +80,12 @@ Los estados son configurables y no se distinguen sólo por color: cada uno
 lleva icono y texto. Las banderas `counts_*` definen a qué indicador del
 panel suma cada estado, de modo que agregar un estado nuevo desde
 Administración lo integra a los tableros sin tocar código.
+
+`counts_attention` decide si el estado entra en **Requiere atención** y
+`attention_weight` qué tan arriba aparece. El indicador del panel y la lista
+leen la misma bandera: no pueden contradecirse. Antes la lista nombraba tres
+códigos de estado a mano, así que un reporte a Sistemas sumaba en el contador
+y nunca aparecía en la lista.
 
 ## Incidencias
 

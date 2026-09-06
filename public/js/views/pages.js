@@ -19,7 +19,8 @@ export async function floorsView(outlet, route) {
 
   outlet.innerHTML = `
     <div class="page-head">
-      <div><h1>Mapa por piso</h1><p>Distribución real del rack. Toque una habitación para abrir su expediente.</p></div>
+      <div><h1>Mapa por piso</h1><p>Distribución real del rack. Toque una habitación para abrir su expediente,
+        o active la selección múltiple para cambiar varias de una vez.</p></div>
     </div>
     <div data-floors></div>
     <div data-summary style="margin-bottom:16px"></div>

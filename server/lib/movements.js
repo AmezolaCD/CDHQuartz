@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { db, one, all, insert, update, transaction } from './db.js';
 import { stamp } from './time.js';
 import { audit, clientIp } from './audit.js';
-import { getSettingBool } from './settings.js';
+import { getSettingBool, getSettingNumber } from './settings.js';
 
 export class MovementError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -342,5 +342,108 @@ export function recordMovement({
       statusChanged: !!newStatus,
       detailsChanged: detailChanges.length,
     };
+  })();
+}
+
+/**
+ * CAMBIO EN BLOQUE: la misma acción sobre varias habitaciones.
+ *
+ * No es un atajo que escriba por su cuenta: llama a `recordMovement` una vez
+ * por habitación, así que cada una conserva su propio movimiento con su
+ * historial, su auditoría y su notificación. Lo que agrega es que las N
+ * operaciones ocurren dentro de UNA sola transacción: si una falla, ninguna
+ * queda registrada. El lote comparte `bulkId`, de modo que la auditoría puede
+ * responder "estos 12 movimientos fueron un mismo cambio en bloque".
+ *
+ * Las habitaciones que ya estaban en el estado destino y no traen nada más que
+ * registrar se omiten en vez de abortar el lote: seleccionar un piso completo
+ * y marcar "Limpieza terminada" no debe fallar porque tres ya lo estuvieran.
+ */
+export function recordBulkMovement({
+  roomIds, user, req,
+  movementTypeCode = null,
+  statusCode = null,
+  details = [],
+  comment = null,
+}) {
+  if (!has(user, 'movement.create')) throw new MovementError('No tiene permiso para crear movimientos.', 403);
+
+  const ids = [...new Set((roomIds ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) throw new MovementError('Seleccione al menos una habitación.', 400);
+
+  const max = getSettingNumber('bulk_max_rooms', 40);
+  if (ids.length > max) {
+    throw new MovementError(`El cambio en bloque admite hasta ${max} habitaciones a la vez; seleccionó ${ids.length}.`, 400);
+  }
+  if (!movementTypeCode && !statusCode && !(details ?? []).length && !String(comment ?? '').trim()) {
+    throw new MovementError('Elija una acción o un estado para aplicar.', 400);
+  }
+
+  const bulkId = crypto.randomUUID();
+
+  return transaction(() => {
+    // El estado destino se resuelve una vez: es el mismo para todo el lote.
+    const targetCode = statusCode ?? (movementTypeCode
+      ? one(`SELECT s.code FROM movement_types mt
+               LEFT JOIN room_statuses s ON s.id = mt.target_status_id
+              WHERE mt.code = @code AND mt.active = 1`, { code: movementTypeCode })?.code
+      : null);
+
+    const aplicadas = [];
+    const omitidas = [];
+
+    for (const roomId of ids) {
+      const room = getRoom(roomId);
+      if (!room) throw new MovementError(`Habitación ${roomId} no encontrada.`, 404);
+      if (!room.active) { omitidas.push({ number: room.number, motivo: 'desactivada' }); continue; }
+
+      // Sin acción, sin comentario y ya en el estado destino: no hay nada que
+      // contar. Registrarlo sería ruido en el historial de esa habitación.
+      const sinCambio = !movementTypeCode && !(details ?? []).length
+        && !String(comment ?? '').trim() && room.status_code === targetCode;
+      if (sinCambio) { omitidas.push({ number: room.number, motivo: 'ya estaba en ese estado' }); continue; }
+
+      try {
+        const r = recordMovement({
+          roomId, user, req, movementTypeCode, statusCode, details, comment, photos: [],
+        });
+        aplicadas.push({
+          roomId, number: r.room.number, floor: r.room.floor_name,
+          batchId: r.batchId, movementId: r.primaryId,
+          statusBefore: room.status_name, status: r.room.status_name,
+          statusChanged: r.statusChanged,
+        });
+      } catch (err) {
+        // El error se enriquece con la habitación: "618: requiere comentario"
+        // dice qué corregir; "requiere comentario" a secas, no.
+        if (err instanceof MovementError) throw new MovementError(`Habitación ${room.number}: ${err.message}`, err.status);
+        throw err;
+      }
+    }
+
+    if (!aplicadas.length) {
+      throw new MovementError(
+        omitidas.length
+          ? `Ninguna habitación cambió: ${omitidas.map((o) => `${o.number} (${o.motivo})`).join(', ')}.`
+          : 'No hay cambios que registrar.', 400);
+    }
+
+    audit({
+      entityType: 'bulk',
+      entityId: bulkId,
+      entityLabel: `Cambio en bloque · ${aplicadas.length === 1 ? '1 habitación' : `${aplicadas.length} habitaciones`}`,
+      action: 'bulk_movement',
+      actor: user,
+      before: { estados: Object.fromEntries(aplicadas.map((a) => [a.number, a.statusBefore])) },
+      after: {
+        accion: movementTypeCode ?? 'Cambio de estado',
+        estados: Object.fromEntries(aplicadas.map((a) => [a.number, a.status])),
+        omitidas: omitidas.map((o) => `${o.number} (${o.motivo})`),
+      },
+      reason: String(comment ?? '').trim() || null,
+      req,
+    });
+
+    return { bulkId, aplicadas, omitidas, total: ids.length };
   })();
 }

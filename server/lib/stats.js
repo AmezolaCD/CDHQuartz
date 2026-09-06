@@ -174,8 +174,10 @@ export function trend(days = 14) {
 
 /**
  * Sección "Requiere atención": sólo lo accionable.
- * Mantenimiento pendiente, bloqueadas, incidencias críticas,
- * inspecciones pendientes y reincidencias.
+ * Entra toda habitación cuyo estado esté marcado con `counts_attention`
+ * —trabajo pendiente de cualquier área, bloqueos, fuera de servicio— más las
+ * que tienen incidencias abiertas o reincidencia. El indicador del panel y
+ * esta lista leen la misma bandera, así que siempre coinciden.
  */
 export function attention({ limit = 60 } = {}) {
   const incidents = openIncidentsByRoom();
@@ -186,7 +188,7 @@ export function attention({ limit = 60 } = {}) {
     SELECT r.id, r.number, r.floor_id, f.number AS floor_number, f.name AS floor_name,
            s.code AS status_code, s.name AS status_name, s.icon AS status_icon,
            s.color AS status_color, s.counts_blocked, s.counts_maintenance,
-           s.counts_attention, r.status_changed_at, r.updated_at,
+           s.counts_attention, s.attention_weight, r.status_changed_at, r.updated_at,
            u.full_name AS updated_by_name
       FROM rooms r
       JOIN floors f ON f.id = r.floor_id
@@ -197,9 +199,17 @@ export function attention({ limit = 60 } = {}) {
   const items = [];
   for (const r of rooms) {
     const reasons = [];
-    if (r.status_code === 'MANT_PENDIENTE') reasons.push({ code: 'mantenimiento', label: 'Mantenimiento pendiente', weight: 3 });
-    if (r.counts_blocked) reasons.push({ code: 'bloqueada', label: `Habitación ${r.status_name.toLowerCase()}`, weight: 4 });
-    if (r.status_code === 'INSPECCION_PENDIENTE') reasons.push({ code: 'inspeccion', label: 'Inspección pendiente', weight: 2 });
+    // El motivo sale de las BANDERAS del estado, no de una lista de códigos.
+    // Antes se nombraban tres códigos a mano y cualquier estado nuevo —el
+    // reporte a Sistemas, por ejemplo— se contaba en el indicador pero nunca
+    // aparecía en la lista.
+    if (r.counts_attention || r.counts_blocked) {
+      reasons.push({
+        code: r.counts_blocked ? 'bloqueada' : 'estado',
+        label: r.counts_blocked ? `Habitación ${r.status_name.toLowerCase()}` : r.status_name,
+        weight: r.counts_blocked ? Math.max(4, r.attention_weight ?? 4) : (r.attention_weight ?? 3),
+      });
+    }
 
     const inc = incidents.get(r.id) ?? [];
     if (inc.length) {
