@@ -136,10 +136,12 @@ export const MOVEMENT_TYPES = [
   { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:'INSPECCIONADA',       icon:'clipboard',    is_quick_action:1, sort_order:3 },
   { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:'MANT_PENDIENTE',      icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, sort_order:4 },
   { code:'MAINT_START', name:'Iniciar mantenimiento',   category:'MTTO', target_status:'EN_MANTENIMIENTO',    icon:'tool',         is_quick_action:0, sort_order:5 },
-  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:'INSPECCION_PENDIENTE',icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
+  // Terminado el trabajo, la habitación vuelve al servicio directamente:
+  // Ama de Llaves no vuelve a revisarla después de un reporte.
+  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:'DISPONIBLE',          icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
   { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:'SIS_PENDIENTE',       icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, sort_order:7 },
   { code:'SYS_START',   name:'Iniciar atención de Sistemas', category:'SIS', target_status:'EN_SISTEMAS',    icon:'tool',         is_quick_action:0, sort_order:8 },
-  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:'INSPECCION_PENDIENTE',icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:9 },
+  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:'DISPONIBLE',          icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:9 },
   { code:'BLOCK',       name:'Bloquear habitación',     category:'OTROS',target_status:'BLOQUEADA',           icon:'lock',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, sort_order:10 },
   { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE',          icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:11 },
   { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:'REQUIERE_ATENCION',   icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, sort_order:12 },

@@ -47,7 +47,45 @@ const COLUMNAS_NUEVAS = [
   },
 ];
 
-export function migrate() {
+/**
+ * Ajustes de CONFIGURACIÓN sobre bases ya en uso. Se aplican una sola vez y
+ * quedan anotados en `migrations`: si después el hotel decide otra cosa desde
+ * Administración, arrancar el servidor no le deshace el cambio.
+ *
+ * Cada ajuste comprueba además que el valor siga siendo el anterior, de modo
+ * que una base que ya lo tuviera distinto no se toca.
+ */
+const AJUSTES = [
+  {
+    id: '2026-09-cierre-sin-inspeccion',
+    label: 'Completar mantenimiento o sistemas deja la habitación disponible',
+    sql: `
+      UPDATE movement_types
+         SET target_status_id = (SELECT id FROM room_statuses WHERE code = 'DISPONIBLE')
+       WHERE code IN ('MAINT_DONE', 'SYS_DONE')
+         AND target_status_id = (SELECT id FROM room_statuses WHERE code = 'INSPECCION_PENDIENTE')`,
+  },
+];
+
+/**
+ * Aplica los ajustes pendientes y devuelve los que cambiaron algo.
+ * Se expone aparte para que `npm run upgrade` pueda ejecutarlos DENTRO de su
+ * transacción: así `--dry-run` los simula en vez de aplicarlos.
+ */
+export function aplicarAjustes() {
+  const aplicados = [];
+  for (const a of AJUSTES) {
+    const hecho = db.prepare('SELECT 1 FROM migrations WHERE id = @id').get({ id: a.id });
+    if (hecho) continue;
+    const r = db.prepare(a.sql).run();
+    db.prepare('INSERT INTO migrations (id, label, applied_at) VALUES (@id, @label, @at)')
+      .run({ id: a.id, label: a.label, at: new Date().toISOString() });
+    if (r.changes) aplicados.push({ ...a, changes: r.changes });
+  }
+  return aplicados;
+}
+
+export function migrate({ ajustes = true } = {}) {
   const schema = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
   db.exec(schema);
   // CREATE TABLE IF NOT EXISTS no añade columnas a una tabla que ya existe:
@@ -59,6 +97,8 @@ export function migrate() {
       if (c.backfill) db.exec(c.backfill);
     }
   }
+
+  return ajustes ? aplicarAjustes() : [];
 }
 
 /**

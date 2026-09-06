@@ -105,11 +105,33 @@ nunca un borrado:
 |---|---|
 | Acción de cierre de su misma área (*Mantenimiento completado*) | Lo pendiente de esa categoría |
 | Acción de cierre con `closes_scope = 'habitacion'` (*Liberar habitación*) | Todo lo pendiente de la habitación |
-| Un cambio de estado que devuelve la habitación al servicio (`counts_ready`) | Todo lo pendiente de la habitación |
+| Un cambio de estado que **no sea una acción de cierre** y devuelva la habitación al servicio (`counts_ready`) | Todo lo pendiente de la habitación |
+
+La distinción de la última fila importa desde que *Mantenimiento completado* y
+*Sistemas completado* dejan la habitación **Disponible**: si la vuelta al
+servicio cerrara todo, terminar en un área se llevaría por delante lo que otra
+aún no ha atendido. Una acción de cierre dice exactamente qué cierra; un
+cambio de estado a secas es el comodín.
 
 Los movimientos que cambiaron un campo se excluyen del conteo por reporte: el
 valor actual del campo ya los representa, y contarlos otra vez sería contarlos
 dos veces.
+
+## Cierre del ciclo de un reporte
+
+Terminado el trabajo, la habitación vuelve **directamente a Disponible**: Ama
+de Llaves no revisa la habitación después de un reporte de Mantenimiento o de
+Sistemas. El estado *Inspección pendiente* y la acción *Inspección* siguen
+existiendo para el ciclo de limpieza, que es otra cosa.
+
+## Cambios de configuración sobre bases en uso
+
+Una columna nueva se detecta mirando el esquema. Un cambio de **configuración**
+—como el estado destino de una acción— no: hace falta anotar que ya se aplicó,
+o cada arranque desharía lo que el hotel decidiera después. Para eso está la
+tabla `migrations`: cada ajuste se aplica una sola vez, comprueba además que el
+valor siga siendo el anterior, y `npm run upgrade` lo ejecuta dentro de su
+transacción para que `--dry-run` lo simule en vez de aplicarlo.
 
 ## Extensión sin código
 

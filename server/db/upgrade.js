@@ -10,7 +10,7 @@
 //   npm run upgrade -- --timezone=America/Tijuana
 //   npm run upgrade -- --promote=sistemas    da rol Administrador (recuperación)
 // ============================================================================
-import { db, migrate, one, all, insert, transaction } from '../lib/db.js';
+import { db, migrate, aplicarAjustes, one, all, insert, transaction } from '../lib/db.js';
 import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
@@ -46,7 +46,9 @@ nunca se modifica.
 /** Ejecuta la puesta al día. Devuelve la lista de acciones (aplicadas o previstas). */
 export function upgrade({ dryRun = false, timezone = null, promote = null, quiet = false } = {}) {
   const log = quiet ? () => {} : (...a) => console.log(...a);
-  migrate();
+  // Los ajustes de configuración se dejan fuera de migrate() y se ejecutan
+  // dentro de la transacción de abajo: así `--dry-run` los simula de verdad.
+  migrate({ ajustes: false });
   loadSettings();
 
   const acciones = [];
@@ -54,6 +56,8 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
 
   const aplicar = transaction(() => {
     const idPor = (tabla, code) => one(`SELECT id FROM ${tabla} WHERE code = @code`, { code })?.id ?? null;
+
+    for (const a of aplicarAjustes()) anotar('Ajuste', a.label);
 
     // ------------------------------------------------------- Departamentos
     for (const d of DEPARTMENTS) {

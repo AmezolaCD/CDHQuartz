@@ -60,6 +60,11 @@ configurado desde Administración (un estado renombrado, un umbral ajustado).
 Un campo nuevo se siembra además en todas las habitaciones ya existentes. El
 historial de movimientos no se toca, y cada ejecución queda en la bitácora.
 
+La única excepción son los **ajustes de flujo**, que sí cambian un valor ya
+definido y por eso se anuncian en el resumen (`· Ajuste: …`). Cada uno se
+aplica **una sola vez** y queda anotado en la tabla `migrations`: si después se
+decide otra cosa desde Administración, actualizar no lo deshace.
+
 Dos opciones explícitas, porque cambian valores ya definidos:
 
 ```bash
@@ -192,6 +197,11 @@ Llaves no puede tocar campos de Sistemas, y viceversa.
 **Reincidencia por evento.** Un reporte que afecta varios campos genera varios
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
+
+**El reporte se cierra sin inspección.** Terminado el trabajo, «Mantenimiento
+completado» y «Sistemas completado» devuelven la habitación a **Disponible**:
+Ama de Llaves no vuelve a revisarla después de un reporte. *Inspección
+pendiente* sigue existiendo para el ciclo de limpieza, que es otra cosa.
 
 **Una incidencia abierta es trabajo pendiente, venga de donde venga.** Cuenta
 tanto un campo en valor de incidencia (*Plomería: Falla*) como un reporte que

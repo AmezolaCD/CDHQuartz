@@ -25,9 +25,9 @@ const OPEN_INCIDENTS_SQL = `
  *   · una acción de cierre de su misma área ("Mantenimiento completado");
  *   · una acción de cierre de alcance `habitacion` ("Liberar habitación"),
  *     que resuelve todo lo pendiente de esa habitación;
- *   · un cambio de estado que devuelve la habitación al servicio (cualquier
- *     estado marcado con `counts_ready`): si volvió a estar lista, no queda
- *     nada pendiente que contar.
+ *   · un cambio de estado —que no sea, él mismo, una acción de cierre— que
+ *     devuelve la habitación al servicio (`counts_ready`): si alguien la
+ *     volvió a poner disponible, no queda nada pendiente que contar.
  *
  * Los movimientos de campo se excluyen: el valor actual del campo ya los
  * representa en la consulta anterior, y contarlos aquí sería contarlos dos
@@ -56,7 +56,13 @@ const OPEN_REPORT_INCIDENTS_SQL = `
             (x.closes_incident = 1
               AND (COALESCE(xt.closes_scope, 'categoria') = 'habitacion'
                    OR x.category_id IS m.category_id))
-            OR (x.new_status_id IS NOT x.old_status_id AND xs.counts_ready = 1)
+            -- La vuelta al servicio sólo cierra cuando NO es una acción de
+            -- cierre: "Sistemas completado" deja la habitación disponible y
+            -- no debe llevarse por delante una fuga que Mantenimiento aún no
+            -- ha atendido. Una acción de cierre dice exactamente qué cierra.
+            OR (x.closes_incident = 0
+                AND x.new_status_id IS NOT x.old_status_id
+                AND xs.counts_ready = 1)
           ))`;
 
 export function openIncidents() {

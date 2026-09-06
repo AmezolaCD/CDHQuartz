@@ -194,6 +194,19 @@ describe('Recorrido de operación', () => {
     const linea = await page.locator('.timeline').textContent();
     assert.match(linea, /Reportar mantenimiento/);
     assert.match(linea, /Mantenimiento pendiente/, 'el cambio de estado debe verse en el historial');
+
+    // Al completarlo, la habitación vuelve al servicio: no queda esperando
+    // una inspección de Ama de Llaves.
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Mantenimiento completado' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.fill('#actionForm [name=comment]', 'Reparado en la prueba automatizada.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(900);
+    const estado = await page.locator('.drawer .chip').first().textContent();
+    assert.match(estado, /Disponible/, `la habitación quedó en "${estado.trim()}"`);
     await page.close();
   });
 

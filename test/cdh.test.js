@@ -482,6 +482,50 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
   });
 });
 
+describe('Cierre de un reporte sin inspección', () => {
+  const mov = (numero, quien, code, comentario) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    movementTypeCode: code, comment: comentario,
+  });
+
+  test('completar mantenimiento devuelve la habitación al servicio', () => {
+    mov(704, 'amadellaves', 'MAINT_REPORT', 'Contacto suelto.');
+    assert.equal(getRoomByNumber('704').status_code, 'MANT_PENDIENTE');
+    mov(704, 'mantenimiento', 'MAINT_DONE', 'Contacto reemplazado.');
+    assert.equal(getRoomByNumber('704').status_code, 'DISPONIBLE',
+      'Ama de Llaves no vuelve a revisar la habitación después de un reporte');
+  });
+
+  test('completar sistemas devuelve la habitación al servicio', () => {
+    mov(705, 'amadellaves', 'SYS_REPORT', 'Sin señal de TV.');
+    assert.equal(getRoomByNumber('705').status_code, 'SIS_PENDIENTE');
+    mov(705, 'sistemas', 'SYS_DONE', 'Cable recolocado.');
+    assert.equal(getRoomByNumber('705').status_code, 'DISPONIBLE');
+  });
+
+  test('el estado de inspección sigue existiendo para el ciclo de limpieza', () => {
+    // No se elimina: la inspección de Ama de Llaves tras la limpieza es otra
+    // cosa, y el hotel puede volver a usarlo desde Administración.
+    assert.ok(one("SELECT 1 FROM room_statuses WHERE code = 'INSPECCION_PENDIENTE' AND active = 1"));
+    assert.ok(one("SELECT 1 FROM movement_types WHERE code = 'INSPECTION' AND active = 1"));
+  });
+
+  test('devolver al servicio al cerrar no se lleva por delante lo de otra área', () => {
+    // "Sistemas completado" ahora deja la habitación disponible; si esa vuelta
+    // al servicio cerrara todo, una fuga sin atender desaparecería del tablero.
+    const abiertas = () => stats.overview().incidenciasAbiertas;
+    const antes = abiertas();
+    mov(706, 'amadellaves', 'MAINT_REPORT', 'Fuga en la regadera.');
+    mov(706, 'amadellaves', 'SYS_REPORT', 'Teléfono sin tono.');
+    assert.equal(abiertas(), antes + 2);
+    mov(706, 'sistemas', 'SYS_DONE', 'Extensión reprogramada.');
+    assert.equal(getRoomByNumber('706').status_code, 'DISPONIBLE');
+    assert.equal(abiertas(), antes + 1, 'la fuga sigue contando');
+    mov(706, 'mantenimiento', 'MAINT_DONE', 'Empaque cambiado.');
+    assert.equal(abiertas(), antes);
+  });
+});
+
 describe('Incidencias abiertas por reporte', () => {
   const abiertas = () => stats.overview().incidenciasAbiertas;
   const mov = (numero, quien, code, comentario) => recordMovement({

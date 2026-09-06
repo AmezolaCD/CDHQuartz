@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS room_types (
 
 -- Catálogo configurable de estados. Cada estado aporta a los contadores
 -- del dashboard mediante banderas semánticas (no se depende del color).
+-- Ajustes de datos ya aplicados. A diferencia de una columna nueva, un cambio
+-- de configuración no se puede detectar mirando el esquema: hace falta anotar
+-- que ya se hizo, para no repetirlo si el hotel decide otra cosa después.
+CREATE TABLE IF NOT EXISTS migrations (
+  id         TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS room_statuses (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   code               TEXT NOT NULL UNIQUE,
