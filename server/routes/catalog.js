@@ -39,6 +39,7 @@ router.get('/bootstrap', requireAuth, asyncRoute((req, res) => {
       app: getSetting('app_name', 'CDH'),
       timezone: getTimezone(),
       targetRooms: Number(getSetting('target_room_count', 155)),
+      bulkMaxRooms: Number(getSetting('bulk_max_rooms', 40)),
       logo: logoUrl(),
     },
     floors: all(`

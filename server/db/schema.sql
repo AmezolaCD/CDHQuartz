@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS room_statuses (
   counts_blocked     INTEGER NOT NULL DEFAULT 0,
   counts_attention   INTEGER NOT NULL DEFAULT 0,
   counts_pending     INTEGER NOT NULL DEFAULT 0,
+  -- Prioridad del estado en la sección "Requiere atención": a mayor número,
+  -- más arriba aparece. Sólo se toma en cuenta si counts_attention = 1.
+  attention_weight   INTEGER NOT NULL DEFAULT 3,
   sort_order         INTEGER NOT NULL DEFAULT 0,
   is_system          INTEGER NOT NULL DEFAULT 0,
   active             INTEGER NOT NULL DEFAULT 1

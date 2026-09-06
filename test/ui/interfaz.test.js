@@ -211,6 +211,40 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('el modo en bloque selecciona en el rack y aplica a todas de una vez', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+
+    await page.locator('[data-bulk]').click();
+    await page.waitForSelector('.bulk-bar');
+
+    // En modo bloque el rack selecciona: no debe abrir el expediente.
+    const habitaciones = page.locator('.room:not(.inactive)');
+    for (let i = 0; i < 3; i += 1) await habitaciones.nth(i).click();
+    await page.waitForTimeout(250);
+    assert.equal(await paneles(page), 0, 'seleccionar no debe abrir el expediente');
+    assert.equal(await page.locator('.room.selected').count(), 3);
+    assert.equal(await page.locator('.bulk-count strong').textContent(), '3');
+
+    const numeros = await habitaciones.nth(0).locator('.num').textContent();
+    await page.selectOption('.bulk-form [name=accion]', 'mt:CLEAN_DONE');
+    await page.fill('.bulk-form [name=comment]', 'Ronda de prueba automatizada.');
+    await page.locator('[data-apply]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    assert.match(await page.locator('.toast.ok').textContent(), /3 habitaciones actualizadas/);
+
+    // El cambio quedó en cada expediente, no sólo en el aviso.
+    await page.locator('[data-bulk]').click();
+    await page.waitForTimeout(600);
+    await page.locator('.room', { hasText: numeros }).first().click();
+    await page.waitForSelector('.drawer.open');
+    await page.locator('.drawer [data-tab="historial"]').click();
+    await page.waitForSelector('.tl-card');
+    assert.match(await page.locator('.timeline').textContent(), /Ronda de prueba automatizada/);
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
     for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {

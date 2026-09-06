@@ -3,7 +3,8 @@ import { all, one } from '../lib/db.js';
 import { requireAuth, requirePermission, asyncRoute } from '../middleware/auth.js';
 import { photoUpload, toPhotoRecords, discardFiles } from '../lib/uploads.js';
 import {
-  ROOM_SQL, getRoom, recordMovement, MovementError, getFieldMap, isIncidentValue, canWriteCategory,
+  ROOM_SQL, getRoom, recordMovement, recordBulkMovement, MovementError,
+  getFieldMap, isIncidentValue, canWriteCategory,
 } from '../lib/movements.js';
 import { openIncidentsByRoom, recurrence, thresholds } from '../lib/stats.js';
 import { getSettingNumber } from '../lib/settings.js';
@@ -234,6 +235,23 @@ router.get('/:id/history', requirePermission('history.view'), asyncRoute((req, r
     total: one(`SELECT COUNT(*) AS n ${sql}`, params).n,
     items: items.map((m) => ({ ...m, photos: byMovement.get(m.id) ?? [] })),
   });
+}));
+
+/**
+ * Cambio en bloque. Se declara ANTES que `/:id/movements`: Express casaría
+ * "/bulk/movements" contra esa ruta con id = "bulk".
+ */
+router.post('/bulk/movements', requirePermission('movement.create'), asyncRoute((req, res) => {
+  const result = recordBulkMovement({
+    roomIds: Array.isArray(req.body.roomIds) ? req.body.roomIds : [],
+    user: req.user,
+    req,
+    movementTypeCode: req.body.movementType || null,
+    statusCode: req.body.status || null,
+    details: Array.isArray(req.body.details) ? req.body.details : [],
+    comment: req.body.comment ?? null,
+  });
+  res.status(201).json(result);
 }));
 
 // ==================== REGISTRO: la operación transaccional ==================

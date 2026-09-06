@@ -30,6 +30,15 @@ const COLUMNAS_NUEVAS = [
     ddl: 'INTEGER NOT NULL DEFAULT 0',
     backfill: "UPDATE movement_types SET cross_department = 1 WHERE code IN ('MAINT_REPORT', 'SYS_REPORT')",
   },
+  {
+    table: 'room_statuses',
+    column: 'attention_weight',
+    ddl: 'INTEGER NOT NULL DEFAULT 3',
+    backfill: `
+      UPDATE room_statuses SET attention_weight = 2 WHERE code = 'INSPECCION_PENDIENTE';
+      UPDATE room_statuses SET attention_weight = 4
+       WHERE code IN ('BLOQUEADA', 'FUERA_SERVICIO', 'REQUIERE_ATENCION')`,
+  },
 ];
 
 export function migrate() {

@@ -193,6 +193,12 @@ Llaves no puede tocar campos de Sistemas, y viceversa.
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
 
+**Cambios en bloque sin perder trazabilidad.** Aplicar una acción a varias
+habitaciones a la vez no crea un movimiento compartido: cada habitación
+conserva el suyo, con su historial, su auditoría y su notificación. Las N
+operaciones ocurren en una sola transacción, de modo que si una falla no se
+registra ninguna. El tope por lote es configurable (`bulk_max_rooms`).
+
 ---
 
 ## Modelo de datos
@@ -228,6 +234,7 @@ Todas las rutas van bajo `/api` y usan una cookie de sesión `httpOnly`.
 | `GET` | `/rooms/search?q=618` | Búsqueda global |
 | `GET` | `/rooms/:id` · `/rooms/:id/history` | Expediente e historial |
 | `POST` | `/rooms/:id/movements` | **Registro transaccional** (multipart con fotos) |
+| `POST` | `/rooms/bulk/movements` | Misma acción sobre varias habitaciones, en una transacción |
 | `GET` | `/dashboard` · `/dashboard/gerencial` · `/dashboard/floor/:id` | Paneles |
 | `GET` | `/dashboard/attention` · `/activity` · `/recurrence` | Atención, actividad, reincidencia |
 | `GET` | `/reports/movements` · `/reports/summary` | Reportes |

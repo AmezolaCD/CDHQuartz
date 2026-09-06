@@ -15,7 +15,7 @@ const { seed } = await import('../server/db/seed.js');
 const settingsMod = await import('../server/lib/settings.js');
 const { loadSettings } = settingsMod;
 const { withPermissions, findUserByUsername } = await import('../server/lib/auth.js');
-const { recordMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
+const { recordMovement, recordBulkMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
 const { FLOOR_MAP } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
@@ -245,6 +245,36 @@ describe('Indicadores y atención', () => {
     }
   });
 
+  test('el indicador y la lista de atención nunca se contradicen', () => {
+    // El KPI cuenta la bandera `counts_attention`; la lista debe partir de la
+    // MISMA bandera. Antes nombraba tres códigos de estado a mano, así que un
+    // reporte a Sistemas sumaba en el indicador y no aparecía en la lista.
+    const room = getRoomByNumber('808');
+    recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
+      comment: 'Televisión sin señal.',
+    });
+    const att = stats.attention({ limit: 400 });
+    const fila = att.items.find((i) => i.number === '808');
+    assert.ok(fila, 'la habitación reportada a Sistemas debe aparecer en "Requiere atención"');
+    assert.ok(fila.reasons.some((r) => r.label === 'Sistemas pendiente'));
+
+    const marcadas = all(`
+      SELECT r.number FROM rooms r JOIN room_statuses s ON s.id = r.status_id
+       WHERE r.active = 1 AND s.counts_attention = 1`).map((r) => r.number);
+    const enLista = new Set(att.items.map((i) => i.number));
+    for (const n of marcadas) {
+      assert.ok(enLista.has(n), `${n} cuenta en el indicador pero falta en la lista`);
+    }
+  });
+
+  test('el orden pone primero el bloqueo y al final la inspección', () => {
+    const bloqueo = one("SELECT attention_weight w FROM room_statuses WHERE code = 'BLOQUEADA'").w;
+    const sistemas = one("SELECT attention_weight w FROM room_statuses WHERE code = 'SIS_PENDIENTE'").w;
+    const inspeccion = one("SELECT attention_weight w FROM room_statuses WHERE code = 'INSPECCION_PENDIENTE'").w;
+    assert.ok(bloqueo > sistemas && sistemas > inspeccion);
+  });
+
   test('cada movimiento responde qué, quién, cuándo, dónde y por qué', () => {
     const m = one(`SELECT * FROM movements WHERE comment IS NOT NULL ORDER BY id DESC LIMIT 1`);
     assert.ok(m.action, 'QUÉ');
@@ -449,5 +479,101 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
     const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
     assert.deepEqual(destinatarios(n.id), ['SIS'], 'sin copia, sólo el área destino');
     setSettingValue('notify_housekeeping_copy', '1', null);
+  });
+});
+
+describe('Cambios en bloque', () => {
+  const idsDe = (...numeros) => numeros.map((n) => getRoomByNumber(String(n)).id);
+
+  test('una acción sobre varias habitaciones deja un movimiento en cada una', () => {
+    const ids = idsDe(1001, 1002, 1003);
+    const antes = one('SELECT COUNT(*) n FROM movements').n;
+    const r = recordBulkMovement({
+      roomIds: ids, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
+      comment: 'Ronda matutina del piso 10.',
+    });
+    assert.equal(r.aplicadas.length, 3);
+    assert.equal(one('SELECT COUNT(*) n FROM movements').n - antes, 3);
+
+    for (const id of ids) {
+      const m = one('SELECT * FROM movements WHERE room_id = @id ORDER BY id DESC LIMIT 1', { id });
+      assert.equal(m.action_code, 'CLEAN_DONE');
+      assert.equal(m.new_status_name, 'Limpieza terminada');
+      assert.equal(m.comment, 'Ronda matutina del piso 10.');
+      assert.ok(m.user_name && m.local_time && m.timezone, 'el sello del servidor no cambia por ser un lote');
+    }
+  });
+
+  test('cada habitación conserva su propio lote: el historial no se comparte', () => {
+    const ids = idsDe(1005, 1006);
+    const r = recordBulkMovement({
+      roomIds: ids, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
+    });
+    const lotes = new Set(r.aplicadas.map((a) => a.batchId));
+    assert.equal(lotes.size, 2, 'dos habitaciones, dos movimientos distintos');
+  });
+
+  test('el lote es todo o nada: si una habitación falla, ninguna cambia', () => {
+    const ids = idsDe(1008, 1010);
+    const previos = ids.map((id) => one('SELECT status_id FROM rooms WHERE id = @id', { id }).status_id);
+    const total = one('SELECT COUNT(*) n FROM movements').n;
+
+    // MAINT_REPORT exige comentario: el lote entero debe revertirse.
+    assert.throws(
+      () => recordBulkMovement({ roomIds: ids, user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT' }),
+      (e) => e instanceof MovementError && /comentario/i.test(e.message));
+
+    assert.equal(one('SELECT COUNT(*) n FROM movements').n, total, 'no debe quedar ningún movimiento suelto');
+    ids.forEach((id, i) => {
+      assert.equal(one('SELECT status_id FROM rooms WHERE id = @id', { id }).status_id, previos[i]);
+    });
+  });
+
+  test('el error nombra la habitación que lo provocó', () => {
+    assert.throws(
+      () => recordBulkMovement({ roomIds: idsDe(1011), user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT' }),
+      (e) => /Habitación 1011:/.test(e.message));
+  });
+
+  test('las habitaciones que ya están en el estado destino se omiten, no fallan', () => {
+    const ids = idsDe(1012, 1014);
+    recordBulkMovement({ roomIds: [ids[0]], user: user('supervisor'), statusCode: 'BLOQUEADA', comment: 'Obra.' });
+    const r = recordBulkMovement({ roomIds: ids, user: user('supervisor'), statusCode: 'BLOQUEADA' });
+    assert.equal(r.aplicadas.length, 1);
+    assert.equal(r.omitidas.length, 1);
+    assert.match(r.omitidas[0].motivo, /ya estaba/);
+  });
+
+  test('el lote respeta el tope configurado', () => {
+    const { setSettingValue } = settingsMod;
+    setSettingValue('bulk_max_rooms', '2', null);
+    assert.throws(
+      () => recordBulkMovement({ roomIds: idsDe(1015, 1016, 1017), user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' }),
+      (e) => /hasta 2 habitaciones/.test(e.message));
+    setSettingValue('bulk_max_rooms', '40', null);
+  });
+
+  test('el lote respeta los permisos igual que un cambio individual', () => {
+    assert.throws(
+      () => recordBulkMovement({ roomIds: idsDe(1018, 1019), user: user('recepcion'), movementTypeCode: 'CLEAN_DONE' }),
+      (e) => e instanceof MovementError && e.status === 403);
+  });
+
+  test('el lote deja una entrada de auditoría que lo identifica como tal', () => {
+    const r = recordBulkMovement({
+      roomIds: idsDe(1020, 1022), user: user('amadellaves'), movementTypeCode: 'CLEAN_START',
+    });
+    const a = one("SELECT * FROM audit_log WHERE action = 'bulk_movement' ORDER BY id DESC LIMIT 1");
+    assert.equal(a.entity_id, r.bulkId);
+    const despues = JSON.parse(a.after_json);
+    assert.deepEqual(Object.keys(despues.estados).sort(), ['1020', '1022']);
+    assert.ok(JSON.parse(a.before_json).estados['1020'], 'la auditoría guarda el estado anterior de cada habitación');
+  });
+
+  test('un lote vacío o sin acción se rechaza', () => {
+    assert.throws(() => recordBulkMovement({ roomIds: [], user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' }),
+      (e) => /al menos una habitación/.test(e.message));
+    assert.throws(() => recordBulkMovement({ roomIds: idsDe(1001), user: user('amadellaves') }),
+      (e) => /acción o un estado/.test(e.message));
   });
 });
