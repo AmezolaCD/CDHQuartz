@@ -89,9 +89,27 @@ y nunca aparecía en la lista.
 
 ## Incidencias
 
-Una incidencia está **abierta** cuando el valor actual de un campo coincide
-con alguno de los valores configurados en `is_incident_when`. Se cierra sola
-al corregir el valor: no hay un estado de incidencia que mantener sincronizado.
+Una incidencia está **abierta** por cualquiera de dos vías:
+
+1. **Por campo.** El valor actual de un campo coincide con alguno de los
+   configurados en `is_incident_when` (*Plomería: Falla*). Se cierra sola al
+   corregir el valor: no hay un estado de incidencia que mantener sincronizado.
+2. **Por reporte.** Una acción marcada con `is_incident` la levantó —un
+   reporte a Mantenimiento o a Sistemas, un daño, un bloqueo— y nada posterior
+   la cerró.
+
+Un reporte se cierra de tres maneras, todas ellas un movimiento del historial,
+nunca un borrado:
+
+| Cómo | Qué cierra |
+|---|---|
+| Acción de cierre de su misma área (*Mantenimiento completado*) | Lo pendiente de esa categoría |
+| Acción de cierre con `closes_scope = 'habitacion'` (*Liberar habitación*) | Todo lo pendiente de la habitación |
+| Un cambio de estado que devuelve la habitación al servicio (`counts_ready`) | Todo lo pendiente de la habitación |
+
+Los movimientos que cambiaron un campo se excluyen del conteo por reporte: el
+valor actual del campo ya los representa, y contarlos otra vez sería contarlos
+dos veces.
 
 ## Extensión sin código
 

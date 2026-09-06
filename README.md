@@ -193,6 +193,12 @@ Llaves no puede tocar campos de Sistemas, y viceversa.
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
 
+**Una incidencia abierta es trabajo pendiente, venga de donde venga.** Cuenta
+tanto un campo en valor de incidencia (*Plomería: Falla*) como un reporte que
+nadie ha cerrado. Un reporte se cierra con la acción de cierre de su área, con
+«Liberar habitación», o al devolver la habitación a un estado de servicio —
+nunca borrando nada.
+
 **Cambios en bloque sin perder trazabilidad.** Aplicar una acción a varias
 habitaciones a la vez no crea un movimiento compartido: cada habitación
 conserva el suyo, con su historial, su auditoría y su notificación. Las N

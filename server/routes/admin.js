@@ -148,7 +148,8 @@ catalogResource('movement-types', {
   table: 'movement_types', entityType: 'movement_type', label: 'tipo de movimiento', permission: 'admin.catalog',
   columns: {
     code: 'text', name: 'text', category_id: 'int', target_status_id: 'int', icon: 'text',
-    severity: 'text', is_incident: 'bool', closes_incident: 'bool', requires_comment: 'bool',
+    severity: 'text', is_incident: 'bool', closes_incident: 'bool', closes_scope: 'text',
+    requires_comment: 'bool',
     requires_photo: 'bool', allows_photo: 'bool', is_quick_action: 'bool',
     cross_department: 'bool', notify: 'bool',
     sort_order: 'int', active: 'bool',

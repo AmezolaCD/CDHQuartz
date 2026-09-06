@@ -141,7 +141,7 @@ export const MOVEMENT_TYPES = [
   { code:'SYS_START',   name:'Iniciar atención de Sistemas', category:'SIS', target_status:'EN_SISTEMAS',    icon:'tool',         is_quick_action:0, sort_order:8 },
   { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:'INSPECCION_PENDIENTE',icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:9 },
   { code:'BLOCK',       name:'Bloquear habitación',     category:'OTROS',target_status:'BLOQUEADA',           icon:'lock',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, sort_order:10 },
-  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE',          icon:'unlock',       is_quick_action:1, closes_incident:1, sort_order:11 },
+  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE',          icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:11 },
   { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:'REQUIERE_ATENCION',   icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, sort_order:12 },
   { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, sort_order:13 },
   { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, sort_order:14 },

@@ -98,6 +98,22 @@ function detailPanel(data, reload) {
   const node = el('<div></div>');
   if (!data.categories.length) { node.innerHTML = emptyState('No hay categorías configuradas.'); return node; }
 
+  // Un reporte abierto no se ve en ningún campo: sin esta lista, el
+  // expediente diría "1 incidencia abierta" sin decir cuál.
+  if (data.openIncidents.length) {
+    node.appendChild(el(`
+      <div class="open-incidents">
+        <div class="tiny bold" style="text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">
+          ${icon('alert', 13)} ${data.openIncidents.length === 1
+            ? 'Incidencia abierta' : `${data.openIncidents.length} incidencias abiertas`}
+        </div>
+        ${data.openIncidents.map((i) => `<div class="oi">
+          <span class="chip tiny">${esc(i.category ?? 'General')}</span>
+          <span><strong>${esc(i.field)}</strong>${i.value ? ` — ${esc(i.value)}` : ''}</span>
+        </div>`).join('')}
+      </div>`));
+  }
+
   for (const cat of data.categories) {
     const incidents = cat.fields.filter((f) => f.isIncident).length;
     const box = el(`

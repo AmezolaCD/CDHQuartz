@@ -482,6 +482,84 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
   });
 });
 
+describe('Incidencias abiertas por reporte', () => {
+  const abiertas = () => stats.overview().incidenciasAbiertas;
+  const mov = (numero, quien, code, comentario) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    movementTypeCode: code, comment: comentario,
+  });
+
+  test('un reporte a Sistemas cuenta como incidencia abierta hasta que se cierra', () => {
+    const antes = abiertas();
+    mov(601, 'amadellaves', 'SYS_REPORT', 'Televisión sin señal.');
+    assert.equal(abiertas(), antes + 1, 'el reporte debe contar en el indicador');
+    mov(601, 'sistemas', 'SYS_DONE', 'Decodificador reemplazado.');
+    assert.equal(abiertas(), antes, 'completar el trabajo debe cerrarla');
+  });
+
+  test('cerrar en un área no cierra lo pendiente de otra', () => {
+    const antes = abiertas();
+    mov(602, 'amadellaves', 'MAINT_REPORT', 'Fuga en el lavabo.');
+    mov(602, 'sistemas', 'SYS_DONE', 'Trabajo de Sistemas, ajeno a la fuga.');
+    assert.equal(abiertas(), antes + 1, 'la fuga sigue pendiente');
+    mov(602, 'mantenimiento', 'MAINT_DONE', 'Empaque reemplazado.');
+    assert.equal(abiertas(), antes);
+  });
+
+  test('"Liberar habitación" cierra todo lo pendiente de esa habitación', () => {
+    const antes = abiertas();
+    mov(603, 'supervisor', 'BLOCK', 'Obra en el piso.');
+    mov(603, 'amadellaves', 'DAMAGE', 'Espejo roto.');
+    assert.equal(abiertas(), antes + 2, 'dos áreas, dos incidencias');
+    mov(603, 'supervisor', 'RELEASE', 'Todo resuelto.');
+    assert.equal(abiertas(), antes);
+  });
+
+  test('devolver la habitación al servicio también cierra lo pendiente', () => {
+    const antes = abiertas();
+    const room = getRoomByNumber('604');
+    mov(604, 'amadellaves', 'SYS_REPORT', 'Sin internet.');
+    assert.equal(abiertas(), antes + 1);
+    recordMovement({
+      roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE',
+      comment: 'Se resolvió sin registrar la acción.',
+    });
+    assert.equal(abiertas(), antes, 'si volvió a estar lista, no queda nada pendiente');
+  });
+
+  test('una observación no cierra nada', () => {
+    const antes = abiertas();
+    mov(605, 'amadellaves', 'SYS_REPORT', 'Teléfono mudo.');
+    mov(605, 'amadellaves', 'NOTE', 'Sigo esperando a Sistemas.');
+    assert.equal(abiertas(), antes + 1, 'comentar no resuelve');
+    mov(605, 'sistemas', 'SYS_DONE', 'Extensión reprogramada.');
+  });
+
+  test('un campo en falla se cuenta una sola vez, no dos', () => {
+    const antes = abiertas();
+    recordMovement({
+      roomId: getRoomByNumber('606').id, user: user('mantenimiento'),
+      details: [{ fieldCode: 'plomeria', value: 'Falla' }],
+    });
+    // El cambio de campo genera un movimiento con is_incident = 1 Y deja el
+    // campo en valor de incidencia: debe contar como UNA.
+    assert.equal(abiertas(), antes + 1);
+    recordMovement({
+      roomId: getRoomByNumber('606').id, user: user('mantenimiento'),
+      details: [{ fieldCode: 'plomeria', value: 'OK' }],
+    });
+    assert.equal(abiertas(), antes);
+  });
+
+  test('la habitación reportada aparece con su incidencia en "Requiere atención"', () => {
+    mov(608, 'amadellaves', 'SYS_REPORT', 'Caja fuerte bloqueada.');
+    const fila = stats.attention({ limit: 400 }).items.find((i) => i.number === '608');
+    assert.ok(fila, 'debe aparecer en la lista');
+    assert.equal(fila.incidentCount, 1);
+    assert.ok(fila.reasons.some((r) => r.code === 'incidencia'));
+  });
+});
+
 describe('Cambios en bloque', () => {
   const idsDe = (...numeros) => numeros.map((n) => getRoomByNumber(String(n)).id);
 
