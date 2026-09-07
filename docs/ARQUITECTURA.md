@@ -129,6 +129,29 @@ responsable, que es un movimiento del historial como cualquier otro.
 Qué categorías bloquean se configura desde Administración: es una casilla de
 la categoría, no una lista de códigos en el código.
 
+### El otro lado de la regla: la habitación que ya estaba en servicio
+
+Impedir el paso a un estado de servicio no basta: una habitación **ya
+disponible** a la que se le marca *Plomería: Falla* seguiría a la venta, porque
+ese guardado no cambia el estado. Por eso, cuando un campo de una categoría que
+bloquea pasa a un valor de incidencia y la habitación está en servicio, el
+mismo guardado la retira: pasa al `pending_status_id` de esa categoría
+(*Mantenimiento pendiente*, *Sistemas pendiente*) y deja un movimiento propio
+que lo explica, junto al del campo.
+
+Tres decisiones de esa regla:
+
+- **No exige `room.status`.** Lo provoca el sistema al detectar la falla, no lo
+  pide el usuario; quien reporta puede no tener ese permiso, y dejar la
+  habitación a la venta sería lo inseguro.
+- **Sólo afecta a la que estaba en servicio.** Una habitación en limpieza o en
+  mantenimiento sigue su ciclo sin sobresaltos.
+- **Pedir a la vez un estado de servicio y reportar la falla se rechaza**, en
+  lugar de decidir por el usuario: la petición se contradice a sí misma.
+
+Corregir el campo **no** devuelve sola la habitación al servicio: alguien tiene
+que liberarla, que es justo el paso que la regla anterior custodia.
+
 ## Extensión sin código
 
 Desde Administración se pueden agregar pisos, habitaciones, estados,

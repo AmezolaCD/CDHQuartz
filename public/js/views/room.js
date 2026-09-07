@@ -174,9 +174,22 @@ function editField(room, cat, field, reload) {
       : `<input type="${field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}"
                 name="value" value="${esc(field.value ?? '')}">`;
 
+  // Si el área retira habitaciones de la venta, conviene decirlo ANTES de
+  // guardar: quien marca la falla debe saber que la habitación deja de estar
+  // disponible en el mismo movimiento.
+  const aviso = cat.blocksRelease && room.counts_ready && field.incidentValues?.length
+    // El texto va dentro de un solo <span>: en un contenedor flex, cada
+    // <strong> suelto se convertiría en una columna aparte.
+    ? `<div class="hint-block">${icon('lock', 13)}<span>Registrar ${
+        field.incidentValues.map((v) => `<strong>${esc(v)}</strong>`).join(', ')
+      } retira la habitación de la venta${
+        cat.pendingStatus ? `: pasará a <strong>${esc(cat.pendingStatus)}</strong>` : ''}.</span></div>`
+    : '';
+
   const m = modal({
     title: `${esc(cat.name)} — ${esc(field.label)}`,
     body: `<form id="fieldForm">
+        ${aviso}
         <div class="field">
           <label>Valor nuevo</label>
           ${input}

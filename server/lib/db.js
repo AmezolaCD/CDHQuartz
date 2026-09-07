@@ -43,6 +43,18 @@ const COLUMNAS_NUEVAS = [
     backfill: "UPDATE categories SET blocks_release = 1 WHERE code IN ('MTTO', 'SIS')",
   },
   {
+    table: 'categories',
+    column: 'pending_status_id',
+    ddl: 'INTEGER REFERENCES room_statuses(id)',
+    backfill: `
+      UPDATE categories
+         SET pending_status_id = (SELECT id FROM room_statuses WHERE code = 'MANT_PENDIENTE')
+       WHERE code = 'MTTO';
+      UPDATE categories
+         SET pending_status_id = (SELECT id FROM room_statuses WHERE code = 'SIS_PENDIENTE')
+       WHERE code = 'SIS'`,
+  },
+  {
     table: 'room_statuses',
     column: 'attention_weight',
     ddl: 'INTEGER NOT NULL DEFAULT 3',

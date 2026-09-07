@@ -35,7 +35,8 @@ export function getRoomByNumber(number) {
 export function getFieldMap() {
   const rows = all(`
     SELECT f.*, c.code AS category_code, c.name AS category_name,
-           c.department_id AS category_department_id
+           c.department_id AS category_department_id,
+           c.blocks_release, c.pending_status_id
       FROM fields f JOIN categories c ON c.id = f.category_id
      WHERE f.active = 1 AND c.active = 1`);
   const byCode = new Map();
@@ -168,6 +169,36 @@ export function recordMovement({
       detailChanges.push({ field, oldValue, newValue, current });
     }
 
+    // Una habitación EN SERVICIO a la que se le detecta una falla de un área
+    // que bloquea sale de venta en el mismo guardado. Sin esto, marcar
+    // "Plomería: Falla" dejaba la habitación disponible: el guardián de la
+    // liberación vigila el paso a un estado de servicio, no expulsa a la que
+    // ya está ahí.
+    let retiradaPorFalla = null;
+    const fallasNuevas = detailChanges.filter(
+      (ch) => ch.field.blocks_release && isIncidentValue(ch.field, ch.newValue));
+
+    if (fallasNuevas.length) {
+      const destino = newStatus ?? { counts_ready: room.counts_ready, name: room.status_name };
+      if (destino.counts_ready) {
+        // Pedir explícitamente un estado de servicio mientras se reporta la
+        // falla es contradictorio: se rechaza en vez de decidir por el usuario.
+        if (newStatus) {
+          throw new MovementError(
+            `La habitación ${room.number} no puede quedar como "${newStatus.name}": en este mismo registro se reporta ${
+              fallasNuevas.map((ch) => `${ch.field.label}: ${ch.newValue}`).join('; ')}.`, 409);
+        }
+        const pendiente = fallasNuevas.find((ch) => ch.field.pending_status_id);
+        const fuera = pendiente
+          ? one('SELECT * FROM room_statuses WHERE id = @id AND active = 1', { id: pendiente.field.pending_status_id })
+          : one("SELECT * FROM room_statuses WHERE code = 'REQUIERE_ATENCION' AND active = 1");
+        // El cambio lo provoca el sistema al detectar la falla, no lo pide el
+        // usuario: no exige `room.status`. Quien reporta puede no tener ese
+        // permiso, y dejar la habitación a la venta sería lo inseguro.
+        if (fuera && fuera.id !== room.status_id) { newStatus = fuera; retiradaPorFalla = fallasNuevas[0]; }
+      }
+    }
+
     const hasPrimary = !!mtype || !!newStatus || !!String(comment ?? '').trim() || photos.length > 0;
     if (!hasPrimary && !detailChanges.length) {
       throw new MovementError('No hay cambios que registrar.', 400);
@@ -206,7 +237,9 @@ export function recordMovement({
         category_id: mtype?.category_id ?? null,
         category_name: mtype?.category_name ?? null,
         movement_type_id: mtype?.id ?? null,
-        action: mtype?.name ?? (newStatus ? 'Cambio de estado' : 'Observación'),
+        action: mtype?.name ?? (retiradaPorFalla
+          ? `Retirada del servicio por falla en ${retiradaPorFalla.field.label}`
+          : (newStatus ? 'Cambio de estado' : 'Observación')),
         action_code: mtype?.code ?? (newStatus ? 'STATUS_CHANGE' : 'NOTE'),
         field_label: newStatus ? 'Estado' : null,
         old_value: newStatus ? room.status_name : null,

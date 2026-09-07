@@ -127,7 +127,7 @@ catalogResource('categories', {
   table: 'categories', entityType: 'category', label: 'categoría', permission: 'admin.catalog',
   columns: {
     code: 'text', name: 'text', department_id: 'int', icon: 'text', color: 'text',
-    blocks_release: 'bool', sort_order: 'int', active: 'bool',
+    blocks_release: 'bool', pending_status_id: 'int', sort_order: 'int', active: 'bool',
   },
 });
 

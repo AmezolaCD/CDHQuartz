@@ -593,6 +593,89 @@ describe('No se libera una habitación con un pendiente abierto', () => {
   });
 });
 
+describe('Una falla saca la habitación del servicio', () => {
+  const campo = (numero, quien, code, valor, extra = {}) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    details: [{ fieldCode: code, value: valor }], ...extra,
+  });
+  const mov = (numero, quien, code, comentario) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    movementTypeCode: code, comment: comentario,
+  });
+
+  test('marcar un campo de Mantenimiento en falla retira la habitación de la venta', () => {
+    assert.equal(getRoomByNumber('617').counts_ready, 1, 'parte disponible');
+    campo(617, 'mantenimiento', 'plomeria', 'Falla');
+    assert.equal(getRoomByNumber('617').status_code, 'MANT_PENDIENTE');
+  });
+
+  test('el retiro queda en el historial como un movimiento propio', () => {
+    const movs = all(
+      "SELECT action, old_status_name, new_status_name FROM movements WHERE room_number = '617' ORDER BY id");
+    const retiro = movs.find((m) => /Retirada del servicio/.test(m.action));
+    assert.ok(retiro, 'debe existir un movimiento que explique el cambio de estado');
+    // Los nombres se comparan contra el catálogo: una prueba anterior renombra
+    // un estado a propósito, y el historial guarda el nombre del momento.
+    const nombre = (code) => one('SELECT name FROM room_statuses WHERE code = @code', { code }).name;
+    assert.equal(retiro.old_status_name, nombre('DISPONIBLE'));
+    assert.equal(retiro.new_status_name, nombre('MANT_PENDIENTE'));
+  });
+
+  test('cada área va a su propio estado pendiente', () => {
+    campo(618, 'sistemas', 'wifi', 'Sin servicio');
+    assert.equal(getRoomByNumber('618').status_code, 'SIS_PENDIENTE');
+  });
+
+  test('corregir el campo no devuelve sola la habitación: hay que liberarla', () => {
+    campo(617, 'mantenimiento', 'plomeria', 'OK');
+    assert.equal(getRoomByNumber('617').status_code, 'MANT_PENDIENTE');
+    mov(617, 'supervisor', 'RELEASE', 'Reparada y revisada.');
+    assert.equal(getRoomByNumber('617').counts_ready, 1);
+  });
+
+  test('un campo de Ama de Llaves no retira la habitación de la venta', () => {
+    campo(619, 'amadellaves', 'blancos', 'Incompleto');
+    assert.equal(getRoomByNumber('619').counts_ready, 1);
+  });
+
+  test('una habitación que ya está fuera de servicio no cambia de estado', () => {
+    mov(620, 'amadellaves', 'CLEAN_START');
+    campo(620, 'mantenimiento', 'hvac', 'Falla');
+    assert.equal(getRoomByNumber('620').status_code, 'EN_LIMPIEZA',
+      'sólo se retira a la que estaba en servicio; el resto sigue su ciclo');
+  });
+
+  test('pedir un estado de servicio mientras se reporta la falla se rechaza', () => {
+    mov(622, 'amadellaves', 'CLEAN_START');
+    assert.throws(
+      () => campo(622, 'mantenimiento', 'plomeria', 'Falla', {
+        statusCode: 'DISPONIBLE', comment: 'Contradictorio.',
+      }),
+      (e) => e instanceof MovementError && e.status === 409 && /en este mismo registro se reporta/.test(e.message));
+    assert.equal(getRoomByNumber('622').status_code, 'EN_LIMPIEZA', 'no debe quedar nada a medias');
+    assert.equal(
+      one("SELECT value v FROM room_details rd JOIN fields f ON f.id = rd.field_id WHERE rd.room_id = @r AND f.code = 'plomeria'",
+        { r: getRoomByNumber('622').id })?.v ?? 'OK',
+      'OK', 'el campo tampoco se guardó');
+  });
+
+  test('el retiro no exige permiso de cambiar estados', () => {
+    // Lo provoca el sistema al detectar la falla, no lo pide el usuario.
+    // Quien reporta puede no tener `room.status`, y dejar la habitación a la
+    // venta sería lo inseguro.
+    const jefe = user('mantenimiento');
+    assert.ok(jefe.permissions.includes('room.edit'));
+    const antes = getRoomByNumber('1002');
+    assert.equal(antes.counts_ready, 1);
+    recordMovement({
+      roomId: antes.id,
+      user: { ...jefe, permissions: jefe.permissions.filter((p) => p !== 'room.status') },
+      details: [{ fieldCode: 'cerraduras', value: 'Falla' }],
+    });
+    assert.equal(getRoomByNumber('1002').status_code, 'MANT_PENDIENTE');
+  });
+});
+
 describe('Incidencias abiertas por reporte', () => {
   const abiertas = () => stats.overview().incidenciasAbiertas;
   const mov = (numero, quien, code, comentario) => recordMovement({
