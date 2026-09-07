@@ -111,6 +111,24 @@ Los movimientos que cambiaron un campo se excluyen del conteo por reporte: el
 valor actual del campo ya los representa, y contarlos otra vez sería contarlos
 dos veces.
 
+## No se libera con un pendiente abierto
+
+Una habitación no puede pasar a un estado de servicio (`counts_ready`:
+*Disponible*, *Inspeccionada*) mientras tenga una incidencia abierta de una
+categoría marcada con `blocks_release` —hoy Mantenimiento y Sistemas—, venga
+de un reporte o del valor de un campo. La comprobación vive en
+`recordMovement()`, la única puerta de escritura, así que vale igual para la
+acción rápida, el cambio manual de estado y el cambio en bloque; en un lote,
+una sola habitación con pendiente detiene el lote entero.
+
+Lo que **no** bloquea: limpiar, inspeccionar el trabajo de limpieza como paso
+intermedio, comentar, adjuntar fotos o reportar. Lo único vedado es devolver
+la habitación al servicio. La salida es cerrar el pendiente desde el área
+responsable, que es un movimiento del historial como cualquier otro.
+
+Qué categorías bloquean se configura desde Administración: es una casilla de
+la categoría, no una lista de códigos en el código.
+
 ## Extensión sin código
 
 Desde Administración se pueden agregar pisos, habitaciones, estados,

@@ -482,6 +482,117 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
   });
 });
 
+describe('No se libera una habitación con un pendiente abierto', () => {
+  const mov = (numero, quien, code, comentario) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    movementTypeCode: code, comment: comentario,
+  });
+  const estado = (numero, quien, code) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    statusCode: code, comment: 'Cambio manual de estado.',
+  });
+
+  test('el ciclo de limpieza sin pendientes llega hasta liberar', () => {
+    mov(608, 'amadellaves', 'CLEAN_START');
+    mov(608, 'amadellaves', 'CLEAN_DONE');
+    mov(608, 'amadellaves', 'INSPECTION');
+    mov(608, 'supervisor', 'RELEASE', 'Habitación lista.');
+    assert.equal(getRoomByNumber('608').counts_ready, 1);
+  });
+
+  test('un reporte a Sistemas impide liberar e impide dar por buena la inspección', () => {
+    mov(610, 'amadellaves', 'SYS_REPORT', 'Televisión sin señal.');
+    for (const accion of ['RELEASE', 'INSPECTION']) {
+      assert.throws(() => mov(610, 'supervisor', accion, 'Se intenta cerrar.'),
+        (e) => e instanceof MovementError && e.status === 409 && /no puede quedar como/.test(e.message),
+        `${accion} debería rechazarse con el reporte abierto`);
+    }
+    // El mensaje dice qué falta, no sólo que no se puede.
+    try { mov(610, 'supervisor', 'RELEASE', 'Se intenta cerrar.'); } catch (e) {
+      assert.match(e.message, /610/);
+      assert.match(e.message, /Sistemas/);
+      assert.match(e.message, /Televisión sin señal/);
+    }
+  });
+
+  test('cerrado el reporte, la habitación se libera con normalidad', () => {
+    mov(610, 'sistemas', 'SYS_DONE', 'Decodificador reemplazado.');
+    mov(610, 'amadellaves', 'INSPECTION');
+    mov(610, 'supervisor', 'RELEASE', 'Habitación lista.');
+    assert.equal(getRoomByNumber('610').counts_ready, 1);
+  });
+
+  test('el bloqueo no estorba el resto del ciclo', () => {
+    mov(611, 'amadellaves', 'MAINT_REPORT', 'Chapa floja.');
+    // Limpiar, comentar y reportar siguen siendo posibles: lo único vedado es
+    // devolver la habitación al servicio.
+    mov(611, 'amadellaves', 'CLEAN_START');
+    mov(611, 'amadellaves', 'CLEAN_DONE');
+    mov(611, 'amadellaves', 'NOTE', 'Queda pendiente la chapa.');
+    assert.equal(getRoomByNumber('611').status_code, 'LIMPIEZA_TERMINADA');
+  });
+
+  test('un campo de Mantenimiento en falla también impide liberar', () => {
+    mov(612, 'amadellaves', 'CLEAN_START');
+    recordMovement({
+      roomId: getRoomByNumber('612').id, user: user('mantenimiento'),
+      details: [{ fieldCode: 'plomeria', value: 'Falla' }],
+    });
+    assert.throws(() => mov(612, 'supervisor', 'RELEASE', 'Va.'),
+      (e) => /Plomería/.test(e.message));
+    recordMovement({
+      roomId: getRoomByNumber('612').id, user: user('mantenimiento'),
+      details: [{ fieldCode: 'plomeria', value: 'OK' }],
+    });
+    mov(612, 'supervisor', 'RELEASE', 'Ya quedó.');
+    assert.equal(getRoomByNumber('612').counts_ready, 1);
+  });
+
+  test('un pendiente de Ama de Llaves no impide liberar', () => {
+    // Sólo bloquean las categorías marcadas con `blocks_release`, hoy
+    // Mantenimiento y Sistemas. Los blancos los resuelve la propia camarista.
+    mov(613, 'amadellaves', 'CLEAN_START');
+    recordMovement({
+      roomId: getRoomByNumber('613').id, user: user('amadellaves'),
+      details: [{ fieldCode: 'blancos', value: 'Incompleto' }],
+    });
+    mov(613, 'supervisor', 'RELEASE', 'Se repone en el turno.');
+    assert.equal(getRoomByNumber('613').counts_ready, 1);
+  });
+
+  test('el cambio manual de estado no es una puerta trasera', () => {
+    mov(614, 'amadellaves', 'SYS_REPORT', 'Caja fuerte trabada.');
+    assert.throws(() => estado(614, 'supervisor', 'DISPONIBLE'),
+      (e) => e instanceof MovementError && e.status === 409);
+    // Un estado que no devuelve al servicio sí se puede poner.
+    estado(614, 'supervisor', 'EN_LIMPIEZA');
+    assert.equal(getRoomByNumber('614').status_code, 'EN_LIMPIEZA');
+  });
+
+  test('en bloque: una habitación con pendiente detiene el lote entero', () => {
+    mov(615, 'amadellaves', 'CLEAN_START');
+    mov(616, 'amadellaves', 'CLEAN_START');
+    mov(616, 'amadellaves', 'MAINT_REPORT', 'Regadera goteando.');
+    const ids = ['615', '616'].map((n) => getRoomByNumber(n).id);
+    assert.throws(
+      () => recordBulkMovement({ roomIds: ids, user: user('supervisor'), movementTypeCode: 'RELEASE', comment: 'Piso listo.' }),
+      (e) => /616/.test(e.message) && /no puede quedar como/.test(e.message));
+    assert.equal(getRoomByNumber('615').status_code, 'EN_LIMPIEZA', 'el lote es todo o nada');
+  });
+
+  test('el mensaje del lote no repite el número de la habitación', () => {
+    try {
+      recordBulkMovement({
+        roomIds: [getRoomByNumber('616').id], user: user('supervisor'),
+        movementTypeCode: 'RELEASE', comment: 'Va.',
+      });
+      assert.fail('debería rechazarse');
+    } catch (e) {
+      assert.equal((e.message.match(/616/g) ?? []).length, 1, e.message);
+    }
+  });
+});
+
 describe('Incidencias abiertas por reporte', () => {
   const abiertas = () => stats.overview().incidenciasAbiertas;
   const mov = (numero, quien, code, comentario) => recordMovement({
@@ -516,9 +627,12 @@ describe('Incidencias abiertas por reporte', () => {
   });
 
   test('devolver la habitación al servicio también cierra lo pendiente', () => {
+    // Se usa un bloqueo (categoría Otros), no un reporte a Mantenimiento o a
+    // Sistemas: esas áreas impiden devolver la habitación al servicio, así
+    // que con ellas este camino no existe.
     const antes = abiertas();
     const room = getRoomByNumber('604');
-    mov(604, 'amadellaves', 'SYS_REPORT', 'Sin internet.');
+    mov(604, 'supervisor', 'BLOCK', 'Se bloquea por obra.');
     assert.equal(abiertas(), antes + 1);
     recordMovement({
       roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE',

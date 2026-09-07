@@ -101,6 +101,7 @@ function detailPanel(data, reload) {
   // Un reporte abierto no se ve en ningún campo: sin esta lista, el
   // expediente diría "1 incidencia abierta" sin decir cuál.
   if (data.openIncidents.length) {
+    const bloquean = data.openIncidents.filter((i) => i.blocksRelease).length;
     node.appendChild(el(`
       <div class="open-incidents">
         <div class="tiny bold" style="text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">
@@ -110,7 +111,11 @@ function detailPanel(data, reload) {
         ${data.openIncidents.map((i) => `<div class="oi">
           <span class="chip tiny">${esc(i.category ?? 'General')}</span>
           <span><strong>${esc(i.field)}</strong>${i.value ? ` — ${esc(i.value)}` : ''}</span>
+          ${i.blocksRelease ? `<span class="chip danger tiny">${icon('lock', 10)}Impide liberar</span>` : ''}
         </div>`).join('')}
+        ${bloquean ? `<div class="tiny" style="margin-top:7px;opacity:.9">
+          ${icon('lock', 12)} Mientras siga abierta, la habitación no puede quedar disponible ni darse
+          por inspeccionada. Ciérrela desde el área responsable.</div>` : ''}
       </div>`));
   }
 

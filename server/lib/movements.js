@@ -3,6 +3,7 @@ import { db, one, all, insert, update, transaction } from './db.js';
 import { stamp } from './time.js';
 import { audit, clientIp } from './audit.js';
 import { getSettingBool, getSettingNumber } from './settings.js';
+import { openIncidentsForRoom } from './stats.js';
 
 export class MovementError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -125,6 +126,26 @@ export function recordMovement({
       if (!has(user, 'room.status')) throw new MovementError('No tiene permiso para cambiar el estado de la habitación.', 403);
       newStatus = one('SELECT * FROM room_statuses WHERE code = @c AND active = 1', { c: requestedStatus });
       if (!newStatus) throw new MovementError(`Estado desconocido o inactivo: ${requestedStatus}`, 400);
+
+      // No se libera una habitación con un pendiente abierto de un área que
+      // bloquea (Mantenimiento y Sistemas, configurable por categoría). La
+      // comprobación vive en la única puerta de escritura, así que vale igual
+      // para la acción rápida, el cambio manual y el cambio en bloque.
+      if (newStatus.counts_ready) {
+        const bloqueantes = openIncidentsForRoom(room.id).filter((i) => i.blocks_release);
+        if (bloqueantes.length) {
+          // El valor suele ser el comentario del reporte y ya trae su punto:
+          // añadir otro deja "TV sin señal..".
+          const detalle = bloqueantes
+            .map((i) => `${i.category_name ?? 'Sin categoría'}: ${i.field_label}${
+              i.value ? ` — ${String(i.value).replace(/\.$/, '')}` : ''}`)
+            .join('; ');
+          throw new MovementError(
+            `La habitación ${room.number} no puede quedar como "${newStatus.name}": tiene ${
+              bloqueantes.length === 1 ? 'un pendiente' : `${bloqueantes.length} pendientes`
+            } sin cerrar. ${detalle}.`, 409);
+        }
+      }
     }
 
     // ------------------------------------------- 2. Cambios en los detalles
@@ -415,8 +436,13 @@ export function recordBulkMovement({
         });
       } catch (err) {
         // El error se enriquece con la habitación: "618: requiere comentario"
-        // dice qué corregir; "requiere comentario" a secas, no.
-        if (err instanceof MovementError) throw new MovementError(`Habitación ${room.number}: ${err.message}`, err.status);
+        // dice qué corregir; "requiere comentario" a secas, no. Si el mensaje
+        // ya nombra la habitación, no se repite el número.
+        if (err instanceof MovementError) {
+          throw err.message.includes(room.number)
+            ? err
+            : new MovementError(`Habitación ${room.number}: ${err.message}`, err.status);
+        }
         throw err;
       }
     }

@@ -7,7 +7,7 @@ import { localDate, periodRange } from './time.js';
 const OPEN_INCIDENTS_SQL = `
   SELECT rd.room_id, f.id AS field_id, f.label AS field_label, rd.value,
          c.code AS category_code, c.name AS category_name,
-         c.department_id, rd.updated_at, 'campo' AS source
+         c.department_id, c.blocks_release, rd.updated_at, 'campo' AS source
     FROM room_details rd
     JOIN fields f ON f.id = rd.field_id AND f.active = 1
     JOIN categories c ON c.id = f.category_id AND c.active = 1
@@ -38,7 +38,7 @@ const OPEN_REPORT_INCIDENTS_SQL = `
          m.action AS field_label,
          substr(COALESCE(NULLIF(TRIM(m.comment), ''), m.new_status_name), 1, 80) AS value,
          cat.code AS category_code, m.category_name,
-         cat.department_id, m.created_at AS updated_at,
+         cat.department_id, cat.blocks_release, m.created_at AS updated_at,
          m.id AS movement_id, m.severity, 'reporte' AS source
     FROM movements m
     JOIN rooms r ON r.id = m.room_id AND r.active = 1
@@ -61,6 +61,18 @@ const OPEN_REPORT_INCIDENTS_SQL = `
 
 export function openIncidents() {
   return [...all(OPEN_INCIDENTS_SQL), ...all(OPEN_REPORT_INCIDENTS_SQL)];
+}
+
+/**
+ * Las incidencias abiertas de UNA habitación. Filtrar en SQL en vez de
+ * recorrer el hotel entero importa: esto se consulta en cada guardado, y un
+ * cambio en bloque lo consulta una vez por habitación.
+ */
+export function openIncidentsForRoom(roomId) {
+  return [
+    ...all(`${OPEN_INCIDENTS_SQL} AND rd.room_id = @roomId`, { roomId }),
+    ...all(`${OPEN_REPORT_INCIDENTS_SQL} AND m.room_id = @roomId`, { roomId }),
+  ];
 }
 
 export function openIncidentsByRoom() {
