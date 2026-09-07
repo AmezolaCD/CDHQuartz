@@ -107,11 +107,13 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
 
     // -------------------------------------------------- Categorías y campos
     for (const c of CATEGORIES) {
-      const { fields, department, ...fila } = c;
+      const { fields, department, pending_status, ...fila } = c;
       let catId = idPor('categories', c.code);
       if (!catId) {
         catId = insert('categories', {
-          ...fila, department_id: department ? idPor('departments', department) : null,
+          ...fila,
+          department_id: department ? idPor('departments', department) : null,
+          pending_status_id: pending_status ? idPor('room_statuses', pending_status) : null,
         });
         anotar('Categoría', c.name);
       }

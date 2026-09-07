@@ -58,8 +58,12 @@ export function seed({ quiet = false } = {}) {
 
     const cat = {}; const field = {};
     for (const c of CATEGORIES) {
-      const { fields, department, ...row } = c;
-      cat[c.code] = insert('categories', { ...row, department_id: department ? dept[department] : null });
+      const { fields, department, pending_status, ...row } = c;
+      cat[c.code] = insert('categories', {
+        ...row,
+        department_id: department ? dept[department] : null,
+        pending_status_id: pending_status ? status[pending_status] : null,
+      });
       fields.forEach((f, i) => {
         field[f.code] = insert('fields', {
           category_id: cat[c.code],

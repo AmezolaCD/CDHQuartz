@@ -144,6 +144,8 @@ router.get('/:id', asyncRoute((req, res) => {
            c.id AS category_id, c.code AS category_code, c.name AS category_name,
            c.icon AS category_icon, c.color AS category_color,
            c.department_id AS category_department_id, c.sort_order AS category_order,
+           c.blocks_release AS category_blocks_release,
+           (SELECT s.name FROM room_statuses s WHERE s.id = c.pending_status_id) AS category_pending_status,
            u.full_name AS updated_by_name
       FROM fields f
       JOIN categories c ON c.id = f.category_id
@@ -161,6 +163,8 @@ router.get('/:id', asyncRoute((req, res) => {
         id: d.category_id, code: d.category_code, name: d.category_name,
         icon: d.category_icon, color: d.category_color,
         departmentId: d.category_department_id,
+        blocksRelease: !!d.category_blocks_release,
+        pendingStatus: d.category_pending_status,
         canEdit: req.user.permissions.includes('room.edit') && canWriteCategory(req.user, d.category_department_id),
         fields: [],
       };

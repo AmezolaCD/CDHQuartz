@@ -200,6 +200,11 @@ rápida, ni cambiando el estado a mano, ni en un cambio en bloque. Limpiar,
 comentar y reportar siguen siendo posibles. Qué áreas bloquean se configura por
 categoría (`blocks_release`).
 
+**Una falla retira la habitación de la venta.** Marcar un campo de Mantenimiento
+o Sistemas en un valor de incidencia sobre una habitación en servicio la pasa al
+estado pendiente de esa área en el mismo movimiento, con su registro en el
+historial. Corregir el campo no la devuelve sola: hay que liberarla.
+
 **Una incidencia abierta es trabajo pendiente, venga de donde venga.** Cuenta
 tanto un campo en valor de incidencia (*Plomería: Falla*) como un reporte que
 nadie ha cerrado. Un reporte se cierra con la acción de cierre de su área, con

@@ -309,6 +309,33 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('marcar un campo en falla retira la habitación de la venta', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+
+    const tarjeta = page.locator('.room:not(.inactive)').nth(7);
+    const numero = (await tarjeta.locator('.num').textContent()).trim();
+    assert.match(await tarjeta.locator('.st').textContent(), /Disponible/);
+
+    await tarjeta.click();
+    await page.waitForSelector('.drawer.open');
+    // El campo Plomería vive en la categoría Mantenimiento del expediente.
+    await page.locator('.detail-cat', { hasText: 'Mantenimiento' }).locator('summary').click();
+    await page.waitForTimeout(300);
+    const fila = page.locator('.dfield', { hasText: 'Plomería' }).first();
+    await fila.locator('[data-edit="plomeria"]').click();
+    await page.waitForSelector('#fieldForm');
+    await page.selectOption('#fieldForm [name=value]', 'Falla');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(1200);
+
+    const chip = await page.locator('.drawer .chip').first().textContent();
+    assert.match(chip, /Mantenimiento pendiente/, `la habitación ${numero} quedó en "${chip.trim()}"`);
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
     for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {

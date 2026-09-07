@@ -104,7 +104,7 @@ export const CATEGORIES = [
     { code:'objetos_encontrados', label:'Objetos encontrados', type:'text' },
     { code:'observaciones_ama',   label:'Observaciones',       type:'textarea' },
   ]},
-  { code:'MTTO', name:'Mantenimiento', department:'MTTO', icon:'wrench', color:'#ea580c', sort_order:2, blocks_release:1, fields:[
+  { code:'MTTO', name:'Mantenimiento', department:'MTTO', icon:'wrench', color:'#ea580c', sort_order:2, blocks_release:1, pending_status:'MANT_PENDIENTE', fields:[
     { code:'electricidad', label:'Electricidad', type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'plomeria',     label:'Plomería',     type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'hvac',         label:'HVAC (clima)', type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
@@ -113,7 +113,7 @@ export const CATEGORIES = [
     { code:'cerraduras',   label:'Cerraduras',   type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'otros_mtto',   label:'Otros (mantenimiento)', type:'textarea' },
   ]},
-  { code:'SIS', name:'Sistemas', department:'SIS', icon:'wifi', color:'#0284c7', sort_order:3, blocks_release:1, fields:[
+  { code:'SIS', name:'Sistemas', department:'SIS', icon:'wifi', color:'#0284c7', sort_order:3, blocks_release:1, pending_status:'SIS_PENDIENTE', fields:[
     { code:'telefono',     label:'Teléfono',     type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
     { code:'tv',           label:'TV',           type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
     { code:'wifi',         label:'WiFi',         type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
