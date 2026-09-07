@@ -125,7 +125,10 @@ catalogResource('statuses', {
 
 catalogResource('categories', {
   table: 'categories', entityType: 'category', label: 'categoría', permission: 'admin.catalog',
-  columns: { code: 'text', name: 'text', department_id: 'int', icon: 'text', color: 'text', sort_order: 'int', active: 'bool' },
+  columns: {
+    code: 'text', name: 'text', department_id: 'int', icon: 'text', color: 'text',
+    blocks_release: 'bool', sort_order: 'int', active: 'bool',
+  },
 });
 
 catalogResource('fields', {

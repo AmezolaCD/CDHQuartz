@@ -191,6 +191,7 @@ router.get('/:id', asyncRoute((req, res) => {
     lastMovement,
     openIncidents: incidents.map((i) => ({
       field: i.field_label, value: i.value, category: i.category_name, source: i.source,
+      blocksRelease: !!i.blocks_release,
     })),
     recurrence: { window, incidents: recentIncidents, thresholds: thresholds() },
     movementCount: one('SELECT COUNT(*) AS n FROM movements WHERE room_id = @id', { id: room.id }).n,

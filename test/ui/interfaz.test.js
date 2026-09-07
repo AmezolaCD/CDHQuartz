@@ -274,6 +274,41 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('no deja liberar una habitación con un reporte abierto', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.locator('.room').nth(4).click();
+    await page.waitForSelector('.drawer.open');
+
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.fill('#actionForm [name=comment]', 'Caja fuerte trabada.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(1000);
+
+    // El expediente avisa antes de que nadie lo intente.
+    await page.locator('.drawer [data-tab="detalle"]').click();
+    await page.waitForSelector('.open-incidents');
+    assert.match(await page.locator('.open-incidents').textContent(), /Impide liberar/);
+
+    // Y el servidor lo rechaza, con el motivo a la vista.
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Liberar habitación' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.fill('#actionForm [name=comment]', 'Se intenta liberar.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.error', { timeout: 10000 });
+    const aviso = await page.locator('.toast.error').textContent();
+    assert.match(aviso, /no puede quedar como/);
+    assert.match(aviso, /Caja fuerte trabada/);
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
     for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {

@@ -144,6 +144,9 @@ CREATE TABLE IF NOT EXISTS categories (
   department_id INTEGER REFERENCES departments(id),
   icon          TEXT NOT NULL DEFAULT 'folder',
   color         TEXT NOT NULL DEFAULT '#64748b',
+  -- Una incidencia abierta de esta categoría impide devolver la habitación
+  -- al servicio: no se libera una habitación con un pendiente de esta área.
+  blocks_release INTEGER NOT NULL DEFAULT 0,
   sort_order    INTEGER NOT NULL DEFAULT 0,
   active        INTEGER NOT NULL DEFAULT 1
 );

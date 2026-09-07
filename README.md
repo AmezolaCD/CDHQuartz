@@ -193,6 +193,13 @@ Llaves no puede tocar campos de Sistemas, y viceversa.
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
 
+**No se libera una habitación con un pendiente abierto.** Mientras Mantenimiento
+o Sistemas tengan algo sin cerrar en esa habitación —un reporte o un campo en
+falla— no puede pasar a *Disponible* ni a *Inspeccionada*, ni desde la acción
+rápida, ni cambiando el estado a mano, ni en un cambio en bloque. Limpiar,
+comentar y reportar siguen siendo posibles. Qué áreas bloquean se configura por
+categoría (`blocks_release`).
+
 **Una incidencia abierta es trabajo pendiente, venga de donde venga.** Cuenta
 tanto un campo en valor de incidencia (*Plomería: Falla*) como un reporte que
 nadie ha cerrado. Un reporte se cierra con la acción de cierre de su área, con

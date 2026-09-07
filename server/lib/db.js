@@ -37,6 +37,12 @@ const COLUMNAS_NUEVAS = [
     backfill: "UPDATE movement_types SET closes_scope = 'habitacion' WHERE code = 'RELEASE'",
   },
   {
+    table: 'categories',
+    column: 'blocks_release',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    backfill: "UPDATE categories SET blocks_release = 1 WHERE code IN ('MTTO', 'SIS')",
+  },
+  {
     table: 'room_statuses',
     column: 'attention_weight',
     ddl: 'INTEGER NOT NULL DEFAULT 3',
