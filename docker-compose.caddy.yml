@@ -1,0 +1,45 @@
+# ============================================================================
+# CDH — Hotel Quartz · capa de HTTPS para el despliegue en una máquina propia
+#
+# Se usa JUNTO al compose principal, no en lugar de él:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+#
+# El servicio `cdh` sigue publicándose sólo en 127.0.0.1 (útil para revisarlo
+# desde la propia máquina); quien queda expuesto a Internet es Caddy.
+# ============================================================================
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: cdh-caddy
+    restart: unless-stopped
+    depends_on:
+      - cdh
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+
+    environment:
+      CDH_DOMAIN: "${CDH_DOMAIN:?defina CDH_DOMAIN en .env (el dominio que apunta a esta máquina)}"
+
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificados y su renovación. Sin este volumen, cada recreación del
+      # contenedor volvería a pedirlos y toparía con los límites de emisión.
+      - caddy-data:/data
+      - caddy-config:/config
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy-data:
+  caddy-config:

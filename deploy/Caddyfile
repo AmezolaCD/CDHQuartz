@@ -1,0 +1,36 @@
+# ============================================================================
+# CDH — Hotel Quartz · proxy inverso con HTTPS automático
+#
+# Caddy pide y renueva el certificado de Let's Encrypt solo. Necesita:
+#   · un nombre de dominio apuntando a la IP de la máquina (registro A);
+#   · los puertos 80 y 443 abiertos desde Internet.
+#
+# El puerto 80 no se desactiva: Let's Encrypt lo usa para validar el dominio,
+# y Caddy redirige el tráfico normal a HTTPS por su cuenta.
+# ============================================================================
+
+{$CDH_DOMAIN} {
+	encode zstd gzip
+
+	# `cdh` es el nombre del servicio en docker-compose: Caddy lo alcanza por
+	# la red interna, sin pasar por la IP pública de la máquina.
+	reverse_proxy cdh:3000
+
+	# Caddy ya envía X-Forwarded-Proto; el CDH lo lee para marcar la cookie de
+	# sesión como segura (server/routes/auth.js).
+	header {
+		# Un año de HTTPS obligatorio para este dominio.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
