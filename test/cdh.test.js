@@ -19,6 +19,8 @@ const { recordMovement, recordBulkMovement, getRoomByNumber, MovementError } = a
 const stats = await import('../server/lib/stats.js');
 const { FLOOR_MAP } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
+const { backup } = await import('../server/db/backup.js');
+const Database = (await import('better-sqlite3')).default;
 
 const user = (name) => withPermissions(findUserByUsername(name));
 
@@ -361,6 +363,37 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     const { upgrade } = upgradeMod;
     assert.throws(() => upgrade({ quiet: true, timezone: 'Marte/Olympus' }), /Zona horaria inválida/);
     assert.throws(() => upgrade({ quiet: true, promote: 'nadie' }), /No existe el usuario/);
+  });
+});
+
+describe('Respaldo en caliente', () => {
+  test('la copia es consistente aunque haya escrituras en curso', async () => {
+    // Copiar el archivo con `cp` mientras el servidor escribe deja parte de
+    // los datos en el WAL. La copia en línea de SQLite no.
+    const escribiendo = setInterval(
+      () => db.prepare("UPDATE settings SET value = value WHERE key = 'hotel_name'").run(), 1);
+    let copia;
+    try { copia = (await backup({ quiet: true })).archivo; } finally { clearInterval(escribiendo); }
+
+    const c = new Database(copia, { readonly: true });
+    try {
+      assert.equal(c.pragma('integrity_check')[0].integrity_check, 'ok');
+      assert.equal(c.prepare('SELECT COUNT(*) n FROM rooms').get().n, 155);
+      assert.equal(
+        c.prepare('SELECT COUNT(*) n FROM movements').get().n,
+        one('SELECT COUNT(*) n FROM movements').n,
+        'el historial debe viajar completo');
+      assert.ok(
+        c.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type = 'trigger'").get().n > 0,
+        'los disparadores de inmutabilidad viajan con la copia');
+    } finally { c.close(); }
+  });
+
+  test('la rotación conserva sólo los respaldos pedidos', async () => {
+    for (let i = 0; i < 3; i += 1) await backup({ quiet: true, keep: 2 });
+    const dir = path.join(TMP, 'backups');
+    const copias = fs.readdirSync(dir).filter((f) => f.endsWith('.sqlite'));
+    assert.ok(copias.length <= 2, `quedaron ${copias.length} respaldos`);
   });
 });
 

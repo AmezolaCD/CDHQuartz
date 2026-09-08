@@ -121,6 +121,7 @@ imagen final no lleva gcc, python ni node-gyp.
 | `CDH_TZ` | `America/Tijuana` | Zona horaria que sella cada movimiento |
 | `CDH_PORT` | `3000` | Puerto publicado en el anfitrión |
 | `CDH_BIND` | `127.0.0.1` | Interfaz publicada; use `0.0.0.0` sólo si ya resolvió el HTTPS |
+| `CDH_DOMAIN` | — | Dominio del despliegue con Caddy; obligatoria sólo con `docker-compose.caddy.yml` |
 
 ### Notas de operación
 
@@ -135,11 +136,87 @@ Detrás de un proxy inverso, propague `X-Forwarded-Proto`: la aplicación ya
 tiene `trust proxy` y marca la cookie de sesión como `secure` cuando la
 petición llegó por HTTPS.
 
-Respaldo del estado completo:
+### Respaldos
+
+`npm run backup` hace una copia **en caliente**, sin detener el servicio:
+
+```bash
+docker compose exec cdh npm run backup          # a /app/data/backups/
+docker compose exec cdh npm run backup -- --keep=30
+```
+
+Copiar el `.sqlite` con `cp` mientras el servidor escribe produce un archivo
+roto: el modo WAL deja parte de los datos fuera. Este comando usa la copia de
+seguridad en línea de SQLite, que entrega un archivo único y consistente
+aunque haya movimientos registrándose en ese momento.
+
+Un respaldo en el mismo disco no protege de que el disco falle: **bájelo de la
+máquina**.
+
+```bash
+# Diario a las 03:00, y una copia fuera del servidor.
+0 3 * * * cd /opt/cdh && docker compose exec -T cdh npm run backup --silent
+```
+
+El estado completo, incluidas las fotografías, es el volumen entero:
 
 ```bash
 docker run --rm -v cdhquartz_cdh-data:/data -v "$PWD:/backup" alpine \
   tar czf /backup/cdh-$(date +%F).tar.gz -C /data .
+```
+
+## Puesta en producción en una máquina propia
+
+Con HTTPS automático, en una VM de cualquier proveedor (sirve una gratuita como
+las **Always Free** de Oracle Cloud; la imagen es multiarquitectura y corre
+igual en ARM).
+
+**Antes de empezar** necesita un dominio —o un subdominio— apuntando por DNS a
+la IP pública de la máquina. Sin dominio no hay certificado válido, y una
+aplicación con inicio de sesión no debe ir por HTTP.
+
+```bash
+# 1. Docker en la máquina (Ubuntu/Debian)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER" && newgrp docker
+
+# 2. El proyecto
+sudo mkdir -p /opt/cdh && sudo chown "$USER" /opt/cdh
+git clone https://github.com/AmezolaCD/CDHQuartz.git /opt/cdh && cd /opt/cdh
+
+# 3. Configuración
+cp .env.example .env
+#    edite .env:  CDH_SEED_PASSWORD, CDH_TZ, CDH_DOMAIN
+
+# 4. Arranque, con el proxy de HTTPS delante
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+
+# 5. Comprobación
+docker compose ps                       # ambos servicios "healthy"
+curl -sI https://$CDH_DOMAIN/api/health # 200
+```
+
+Caddy pide el certificado a Let's Encrypt y lo renueva solo. Sólo él queda
+expuesto: el CDH sigue publicado en `127.0.0.1`, alcanzable desde Caddy por la
+red interna de Docker.
+
+**Los puertos 80 y 443 deben estar abiertos en los dos sitios.** En Oracle
+Cloud no basta con la lista de seguridad de la red: la imagen trae además
+reglas locales que descartan el tráfico, y hay que abrirlas dentro de la
+máquina.
+
+```bash
+sudo iptables -I INPUT -p tcp --dport 80  -j ACCEPT
+sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+sudo netfilter-persistent save      # que sobrevivan al reinicio
+```
+
+Actualizar a una versión nueva:
+
+```bash
+cd /opt/cdh && git pull
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+docker compose exec cdh npm run upgrade   # pone al día el catálogo
 ```
 
 ## Distribución real: 155 habitaciones en 9 pisos
