@@ -110,9 +110,41 @@ CREATE TABLE IF NOT EXISTS room_statuses (
   -- Prioridad del estado en la sección "Requiere atención": a mayor número,
   -- más arriba aparece. Sólo se toma en cuenta si counts_attention = 1.
   attention_weight   INTEGER NOT NULL DEFAULT 3,
+  -- 1 = estado de VENTA: exige que la habitación esté sin huésped. Ninguna
+  -- habitación ocupada puede quedar en un estado marcado así.
+  requires_vacant    INTEGER NOT NULL DEFAULT 0,
   sort_order         INTEGER NOT NULL DEFAULT 0,
   is_system          INTEGER NOT NULL DEFAULT 0,
   active             INTEGER NOT NULL DEFAULT 1
+);
+
+-- Catálogo de OCUPACIÓN: ¿hay huésped en la habitación?
+--
+-- Es un eje aparte del estado, no otro estado más. Una habitación puede estar
+-- "En limpieza" con el huésped en casa (se queda otra noche) o "En limpieza"
+-- porque el huésped ya se fue: la camarista necesita distinguirlas y el
+-- estado, por sí solo, no lo dice. Multiplicar estados (limpia-ocupada,
+-- limpia-vacante…) haría ilegible el catálogo; dos ejes lo dicen todo.
+CREATE TABLE IF NOT EXISTS room_occupancies (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  code              TEXT NOT NULL UNIQUE,
+  name              TEXT NOT NULL,
+  icon              TEXT NOT NULL DEFAULT 'user',
+  color             TEXT NOT NULL DEFAULT '#64748b',
+  description       TEXT,
+  -- 1 = hay huésped dentro.
+  counts_occupied   INTEGER NOT NULL DEFAULT 0,
+  -- 1 = el huésped pidió no ser molestado: no se entra a la habitación.
+  do_not_disturb    INTEGER NOT NULL DEFAULT 0,
+  -- 1 = ocupación "sin huésped". Es a la que vuelve una habitación cuando se
+  -- pone de nuevo a la venta.
+  is_default        INTEGER NOT NULL DEFAULT 0,
+  -- Estado al que pasa una habitación A LA VENTA cuando entra un huésped:
+  -- sin él, un check-in dejaría la habitación disponible para venderse otra vez.
+  target_status_id  INTEGER REFERENCES room_statuses(id),
+  sort_order        INTEGER NOT NULL DEFAULT 0,
+  is_system         INTEGER NOT NULL DEFAULT 0,
+  active            INTEGER NOT NULL DEFAULT 1
 );
 
 -- Estado ACTUAL de la habitación. El historial vive en `movements`.
@@ -122,11 +154,13 @@ CREATE TABLE IF NOT EXISTS rooms (
   floor_id          INTEGER NOT NULL REFERENCES floors(id),
   room_type_id      INTEGER REFERENCES room_types(id),
   status_id         INTEGER NOT NULL REFERENCES room_statuses(id),
+  occupancy_id      INTEGER REFERENCES room_occupancies(id),
   grid_row          INTEGER NOT NULL DEFAULT 1,   -- fila visual (equivale al piso)
   grid_col          INTEGER NOT NULL DEFAULT 1,   -- columna visual A..S = 1..19
   notes             TEXT,
   active            INTEGER NOT NULL DEFAULT 1,   -- baja lógica: nunca se borra
   status_changed_at TEXT,
+  occupancy_changed_at TEXT,
   updated_at        TEXT,
   updated_by        INTEGER REFERENCES users(id),
   last_movement_id  INTEGER,
@@ -134,6 +168,9 @@ CREATE TABLE IF NOT EXISTS rooms (
 );
 CREATE INDEX IF NOT EXISTS ix_rooms_floor  ON rooms(floor_id);
 CREATE INDEX IF NOT EXISTS ix_rooms_status ON rooms(status_id);
+-- El índice de `occupancy_id` NO puede ir aquí: en una base en uso la columna
+-- todavía no existe cuando se ejecuta este archivo (la añade el paso de
+-- columnas nuevas, después). Vive en INDICES_TARDIOS, en server/lib/db.js.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_rooms_grid ON rooms(grid_row, grid_col);
 
 -- --------------------------------------------------- Categorías y campos
@@ -189,6 +226,8 @@ CREATE TABLE IF NOT EXISTS movement_types (
   name              TEXT NOT NULL,
   category_id       INTEGER REFERENCES categories(id),
   target_status_id  INTEGER REFERENCES room_statuses(id),
+  -- Ocupación a la que lleva la acción (entrada de huésped, salida, no molestar).
+  target_occupancy_id INTEGER REFERENCES room_occupancies(id),
   icon              TEXT NOT NULL DEFAULT 'bolt',
   severity          TEXT NOT NULL DEFAULT 'normal', -- normal|alta|critica
   is_incident       INTEGER NOT NULL DEFAULT 0,
@@ -237,6 +276,10 @@ CREATE TABLE IF NOT EXISTS movements (
   new_status_id      INTEGER REFERENCES room_statuses(id),
   old_status_name    TEXT,
   new_status_name    TEXT,
+  old_occupancy_id   INTEGER REFERENCES room_occupancies(id),
+  new_occupancy_id   INTEGER REFERENCES room_occupancies(id),
+  old_occupancy_name TEXT,
+  new_occupancy_name TEXT,
   comment            TEXT,                   -- POR QUÉ
   severity           TEXT NOT NULL DEFAULT 'normal',
   is_incident        INTEGER NOT NULL DEFAULT 0,

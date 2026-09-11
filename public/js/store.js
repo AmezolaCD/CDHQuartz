@@ -3,7 +3,7 @@ import { api } from './api.js';
 export const state = {
   user: null,
   hotel: { name: 'Hotel Quartz', app: 'CDH', timezone: '', targetRooms: 155 },
-  floors: [], statuses: [], departments: [], categories: [], roomTypes: [], users: [],
+  floors: [], statuses: [], occupancies: [], departments: [], categories: [], roomTypes: [], users: [],
   recurrenceThresholds: [2, 3, 5, 10],
   selectedFloorId: null,
   notifications: { total: 0, unread: 0, items: [] },
@@ -13,6 +13,7 @@ export const can = (...codes) => codes.every((c) => state.user?.permissions?.inc
 export const canAny = (...codes) => codes.some((c) => state.user?.permissions?.includes(c));
 
 export const statusByCode = (code) => state.statuses.find((s) => s.code === code) ?? null;
+export const occupancyByCode = (code) => state.occupancies.find((o) => o.code === code) ?? null;
 export const floorById = (id) => state.floors.find((f) => f.id === Number(id)) ?? null;
 
 export async function loadSession() {
@@ -30,6 +31,7 @@ export async function loadBootstrap() {
     hotel: data.hotel,
     floors: data.floors,
     statuses: data.statuses,
+    occupancies: data.occupancies ?? [],
     departments: data.departments,
     categories: data.categories,
     roomTypes: data.roomTypes,

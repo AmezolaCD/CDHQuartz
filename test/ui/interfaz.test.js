@@ -336,6 +336,67 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('la entrada de un huésped se ve en el rack y cierra la venta', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+
+    const tarjeta = page.locator('.room:not(.inactive)').nth(10);
+    const numero = (await tarjeta.locator('.num').textContent()).trim();
+    assert.match(await tarjeta.locator('.flag.occ').textContent(), /Vacante/,
+      'el rack dice si hay huésped, aunque no lo haya');
+
+    await tarjeta.click();
+    await page.waitForSelector('.drawer.open');
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Entrada de huésped' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(1200);
+
+    const chips = await page.locator('.drawer .chip').allTextContents();
+    assert.ok(chips.some((c) => /Ocupada/.test(c)), `la habitación ${numero} quedó con ${chips.join(' | ')}`);
+
+    // Con huésped dentro no se vende: el servidor lo rechaza y lo explica.
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.quick button');
+    await page.locator('.quick button', { hasText: 'Liberar habitación' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.error', { timeout: 10000 });
+    assert.match(await page.locator('.toast.error').textContent(), /salida del huésped/);
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const enRack = page.locator('.room', { hasText: numero }).first();
+    assert.equal(await enRack.getAttribute('data-occupied'), '1');
+    assert.match(await enRack.locator('.flag.occ').textContent(), /Ocupada/);
+    await page.close();
+  });
+
+  test('recepción marca en bloque las salidas del piso', async () => {
+    const { page } = await abrirSesion('recepcion');
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+
+    await page.locator('[data-bulk]').click();
+    await page.waitForSelector('.bulk-bar');
+    const habitaciones = page.locator('.room:not(.inactive)');
+    for (const i of [5, 6]) await habitaciones.nth(i).click();
+    await page.waitForTimeout(250);
+
+    await page.selectOption('.bulk-form [name=accion]', 'oc:SALIDA');
+    await page.locator('[data-apply]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    assert.match(await page.locator('.toast.ok').textContent(), /2 habitaciones actualizadas/);
+
+    await page.waitForTimeout(800);
+    assert.match(await habitaciones.nth(5).locator('.flag.occ').textContent(), /Salida/);
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
     for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {

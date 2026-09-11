@@ -87,6 +87,48 @@ leen la misma bandera: no pueden contradecirse. Antes la lista nombraba tres
 códigos de estado a mano, así que un reporte a Sistemas sumaba en el contador
 y nunca aparecía en la lista.
 
+## Ocupación: el segundo eje
+
+El estado responde «¿en qué punto del ciclo de limpieza va?». La ocupación
+responde «¿hay huésped dentro?». Son preguntas independientes y por eso viven
+en catálogos distintos (`room_statuses` y `room_occupancies`): multiplicar
+estados —limpia-ocupada, limpia-vacante, sucia-ocupada…— haría ilegible el
+catálogo y obligaría a tocar código cada vez que el hotel añadiera un matiz.
+
+Las banderas del catálogo de ocupación son:
+
+| Bandera | Qué significa |
+|---|---|
+| `counts_occupied` | Hay huésped dentro (*Ocupada*, *No molestar*) |
+| `do_not_disturb` | No se entra a la habitación |
+| `is_default` | Es la ocupación «sin huésped»; a ella vuelve la habitación al ponerse a la venta |
+| `target_status_id` | Estado al que pasa una habitación a la venta cuando entra un huésped |
+
+Del lado del estado, `requires_vacant` marca el estado de **venta**
+(*Disponible*). Con eso, las dos reglas que impiden la contradicción viven en
+la única puerta de escritura —valen igual para la acción rápida, el cambio
+manual y el cambio en bloque—:
+
+1. Una habitación con `counts_occupied` **no puede** pasar a un estado
+   `requires_vacant`: primero se registra la salida del huésped.
+2. Registrar una ocupación con huésped sobre una habitación que sí estaba a la
+   venta la saca de la venta en el mismo movimiento, al estado que nombra
+   `target_status_id`. No exige el permiso `room.status`: lo decide el sistema
+   al detectar la contradicción, y dejarla vendible sería lo inseguro. Es el
+   mismo patrón con que una falla retira la habitación del servicio.
+
+El camino inverso también se cierra: poner una habitación a la venta la deja
+vacante, porque quien la libera ya afirmó que no hay nadie dentro —y el caso
+contrario acaba de rechazarse por la regla 1.
+
+Limpiar e inspeccionar **no** están restringidos: una habitación de estancia se
+limpia e inspecciona con el huésped en casa; lo único que no puede es volver a
+venderse.
+
+Registrar la ocupación exige el permiso `room.occupancy`, separado de
+`room.status`: Recepción registra entradas y salidas sin poder mover el ciclo
+de limpieza.
+
 ## Incidencias
 
 Una incidencia está **abierta** por cualquiera de dos vías:

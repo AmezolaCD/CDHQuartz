@@ -152,6 +152,100 @@ jobs:
           Write-Host $up
           if ($up -notmatch '\[upgrade\]') { throw "upgrade.js no imprimió nada: no llegó a ejecutarse" }
 
+  actualizacion:
+    name: Actualización desde la versión anterior
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Hace falta el historial para sembrar con la versión anterior.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Sembrar con la versión anterior y ponerla al día con esta
+        # El hotel no reinstala: actualiza una base EN USO. Este paso es el
+        # único que recorre ese camino de verdad. Ya atrapó un índice de
+        # schema.sql sobre una columna que en una base vieja todavía no existe:
+        # las pruebas, que siempre parten de una base nueva, no podían verlo.
+        env:
+          CDH_DATA_DIR: ${{ runner.temp }}/cdh-vieja
+          CDH_SEED_PASSWORD: Actualiza#Prueba2026
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="$(git rev-parse HEAD~1 2>/dev/null || true)"; fi
+          if [ -z "$BASE" ]; then echo "Sin versión anterior con la que comparar."; exit 0; fi
+          echo "Versión anterior: $BASE"
+
+          git worktree add --detach "$RUNNER_TEMP/anterior" "$BASE"
+          ln -s "$PWD/node_modules" "$RUNNER_TEMP/anterior/node_modules"
+
+          # 1) Base sembrada y operada por la versión anterior.
+          ( cd "$RUNNER_TEMP/anterior"
+            npm run seed --silent > /dev/null
+            node --input-type=module -e "
+              const { one } = await import('./server/lib/db.js');
+              const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
+              const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
+              const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
+              const u = withPermissions(findUserByUsername('supervisor'));
+              recordMovement({ roomId: getRoomByNumber('401').id, user: u, movementTypeCode: 'CLEAN_DONE' });
+              recordMovement({ roomId: getRoomByNumber('402').id, user: u, movementTypeCode: 'MAINT_REPORT',
+                comment: 'Fuga registrada antes de actualizar.' });
+              process.stdout.write(String(one('SELECT COUNT(*) n FROM movements').n));
+            " ) > "$RUNNER_TEMP/movimientos-antes.txt"
+          export ANTES="$(cat "$RUNNER_TEMP/movimientos-antes.txt")"
+          echo "Movimientos registrados con la versión anterior: $ANTES"
+
+          # 2) La simulación anuncia el plan y no escribe nada.
+          npm run upgrade --silent -- --dry-run
+          node --input-type=module -e "
+            const { one } = await import('./server/lib/db.js');
+            const n = one('SELECT COUNT(*) x FROM room_occupancies').x;
+            if (n) { console.error('::error::la simulación escribió en la base'); process.exit(1); }
+          "
+
+          # 3) La puesta al día de verdad; la segunda pasada no cambia nada.
+          npm run upgrade --silent
+          SEGUNDA="$(npm run upgrade --silent)"
+          echo "$SEGUNDA"
+          case "$SEGUNDA" in
+            *"ya está al día"*) ;;
+            *) echo "::error::la segunda pasada no es idempotente"; exit 1 ;;
+          esac
+
+          # 4) El historial no se tocó y la operación sigue funcionando.
+          node --input-type=module -e "
+            const { one } = await import('./server/lib/db.js');
+            const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
+            const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
+            const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
+            const fallo = (m) => { console.error('::error::' + m); process.exit(1); };
+            if (one('SELECT COUNT(*) n FROM movements').n !== Number(process.env.ANTES)) {
+              fallo('el historial cambió durante la puesta al día');
+            }
+            if (one('SELECT COUNT(*) n FROM rooms WHERE occupancy_id IS NULL').n) {
+              fallo('quedaron habitaciones sin ocupación');
+            }
+            const rec = withPermissions(findUserByUsername('recepcion'));
+            const r = recordMovement({ roomId: getRoomByNumber('403').id, user: rec, movementTypeCode: 'CHECK_IN' });
+            console.log('403 tras el check-in:', r.room.occupancy_name, '/', r.room.status_name);
+            if (r.room.occupancy_code !== 'OCUPADA') fallo('la operación no funciona tras actualizar');
+          "
+          echo "Actualización correcta sobre una base en uso."
+
+      - name: Limpiar la copia de la versión anterior
+        if: always()
+        run: git worktree remove "$RUNNER_TEMP/anterior" --force || true
+
   imagen:
     name: Imagen Docker
     runs-on: ubuntu-latest

@@ -16,11 +16,16 @@ export const ROOM_SQL = `
          s.code AS status_code, s.name AS status_name, s.icon AS status_icon,
          s.color AS status_color, s.counts_attention, s.counts_blocked,
          s.counts_ready, s.counts_cleaning, s.counts_maintenance, s.counts_pending,
+         s.requires_vacant,
+         o.code AS occupancy_code, o.name AS occupancy_name, o.icon AS occupancy_icon,
+         o.color AS occupancy_color, o.counts_occupied, o.do_not_disturb,
+         o.is_default AS occupancy_is_default,
          t.code AS type_code, t.name AS type_name,
          u.full_name AS updated_by_name
     FROM rooms r
     JOIN floors f ON f.id = r.floor_id
     JOIN room_statuses s ON s.id = r.status_id
+    LEFT JOIN room_occupancies o ON o.id = r.occupancy_id
     LEFT JOIN room_types t ON t.id = r.room_type_id
     LEFT JOIN users u ON u.id = r.updated_by`;
 
@@ -77,6 +82,7 @@ export function recordMovement({
   roomId, user, req,
   movementTypeCode = null,
   statusCode = null,
+  occupancyCode = null,
   details = [],
   comment = null,
   photos = [],
@@ -149,6 +155,22 @@ export function recordMovement({
       }
     }
 
+    // -------------------------------------------- 1b. Ocupación destino
+    // La ocupación es un eje aparte del estado: se resuelve igual y viaja en
+    // el mismo movimiento, para que el historial no tenga que cruzar dos
+    // registros para contar lo que pasó en la habitación.
+    let newOccupancy = null;
+    const requestedOccupancy = occupancyCode ?? (mtype?.target_occupancy_id
+      ? one('SELECT code FROM room_occupancies WHERE id = @id', { id: mtype.target_occupancy_id })?.code
+      : null);
+    if (requestedOccupancy && requestedOccupancy !== room.occupancy_code) {
+      if (!has(user, 'room.occupancy')) {
+        throw new MovementError('No tiene permiso para registrar la ocupación de la habitación.', 403);
+      }
+      newOccupancy = one('SELECT * FROM room_occupancies WHERE code = @c AND active = 1', { c: requestedOccupancy });
+      if (!newOccupancy) throw new MovementError(`Ocupación desconocida o inactiva: ${requestedOccupancy}`, 400);
+    }
+
     // ------------------------------------------- 2. Cambios en los detalles
     const detailChanges = [];
     for (const d of details ?? []) {
@@ -199,7 +221,57 @@ export function recordMovement({
       }
     }
 
-    const hasPrimary = !!mtype || !!newStatus || !!String(comment ?? '').trim() || photos.length > 0;
+    // --------------------- Ocupación y venta no pueden contradecirse
+    // Una habitación con huésped dentro no puede quedar a la venta, y una que
+    // vuelve a la venta está vacante por definición. La regla vive en la única
+    // puerta de escritura, así que vale igual para la acción rápida, el cambio
+    // manual y el cambio en bloque.
+    let ocupacionNormalizada = false;
+    let salidaDeVentaPorHuesped = false;
+    const estadoFinal = newStatus ?? room;   // `room` trae requires_vacant y status_name
+    const ocupacionFinal = newOccupancy ?? {
+      id: room.occupancy_id ?? null,
+      name: room.occupancy_name ?? null,
+      counts_occupied: room.counts_occupied ?? 0,
+    };
+
+    if (estadoFinal.requires_vacant && ocupacionFinal.counts_occupied && (newStatus || newOccupancy)) {
+      if (newStatus) {
+        throw new MovementError(
+          `La habitación ${room.number} no puede quedar como "${newStatus.name}": ${
+            newOccupancy
+              ? `en este mismo registro se marca como ${newOccupancy.name.toLowerCase()}`
+              : `está ${String(ocupacionFinal.name ?? 'ocupada').toLowerCase()}`
+          }. Registre primero la salida del huésped.`, 409);
+      }
+      // Llega un huésped a una habitación que estaba a la venta: sale de la
+      // venta en el mismo movimiento. Lo decide el sistema al registrar la
+      // entrada, no lo pide el usuario, así que no exige `room.status`:
+      // dejarla vendible sería lo inseguro.
+      const destino = newOccupancy.target_status_id
+        ? one('SELECT * FROM room_statuses WHERE id = @id AND active = 1', { id: newOccupancy.target_status_id })
+        : null;
+      if (!destino) {
+        throw new MovementError(
+          `La habitación ${room.number} está "${room.status_name}" y no puede marcarse como "${
+            newOccupancy.name}" sin un estado al que pasar. Configure el estado destino de esa ocupación.`, 409);
+      }
+      if (destino.id !== room.status_id) { newStatus = destino; salidaDeVentaPorHuesped = true; }
+    }
+
+    // El camino inverso: liberar una habitación la deja vacante. Quien la pone
+    // a la venta ya afirmó que no hay nadie dentro; el caso contrario —que sí
+    // lo haya— acaba de rechazarse arriba.
+    if (newStatus?.requires_vacant && !newOccupancy && !ocupacionFinal.counts_occupied) {
+      const libre = one(
+        'SELECT * FROM room_occupancies WHERE is_default = 1 AND active = 1 ORDER BY sort_order LIMIT 1');
+      if (libre && libre.id !== (room.occupancy_id ?? null)) {
+        newOccupancy = libre;
+        ocupacionNormalizada = true;
+      }
+    }
+
+    const hasPrimary = !!mtype || !!newStatus || !!newOccupancy || !!String(comment ?? '').trim() || photos.length > 0;
     if (!hasPrimary && !detailChanges.length) {
       throw new MovementError('No hay cambios que registrar.', 400);
     }
@@ -226,6 +298,27 @@ export function recordMovement({
       ip,
     };
 
+    // Todo movimiento del lote lleva el mismo antes/después de ocupación, igual
+    // que ya ocurre con el estado: así una sola fila basta para reconstruir
+    // cómo quedó la habitación.
+    const ocupacionDelMovimiento = {
+      old_occupancy_id: room.occupancy_id ?? null,
+      new_occupancy_id: newOccupancy ? newOccupancy.id : (room.occupancy_id ?? null),
+      old_occupancy_name: room.occupancy_name ?? null,
+      new_occupancy_name: newOccupancy ? newOccupancy.name : (room.occupancy_name ?? null),
+    };
+
+    /** Etiqueta de un movimiento que nadie pidió por su nombre. */
+    const accionAutomatica = () => {
+      if (retiradaPorFalla) return `Retirada del servicio por falla en ${retiradaPorFalla.field.label}`;
+      if (salidaDeVentaPorHuesped) return `Entrada de huésped · ${newOccupancy.name}`;
+      if (newOccupancy && ocupacionNormalizada) return 'Cambio de estado';
+      if (newOccupancy && newStatus) return 'Cambio de estado y ocupación';
+      if (newOccupancy) return 'Cambio de ocupación';
+      if (newStatus) return 'Cambio de estado';
+      return 'Observación';
+    };
+
     let primaryId = null;
     let notifySeverity = null;
 
@@ -237,17 +330,20 @@ export function recordMovement({
         category_id: mtype?.category_id ?? null,
         category_name: mtype?.category_name ?? null,
         movement_type_id: mtype?.id ?? null,
-        action: mtype?.name ?? (retiradaPorFalla
-          ? `Retirada del servicio por falla en ${retiradaPorFalla.field.label}`
-          : (newStatus ? 'Cambio de estado' : 'Observación')),
-        action_code: mtype?.code ?? (newStatus ? 'STATUS_CHANGE' : 'NOTE'),
-        field_label: newStatus ? 'Estado' : null,
-        old_value: newStatus ? room.status_name : null,
-        new_value: newStatus ? newStatus.name : null,
+        action: mtype?.name ?? accionAutomatica(),
+        action_code: mtype?.code
+          ?? (newStatus ? 'STATUS_CHANGE' : newOccupancy ? 'OCCUPANCY_CHANGE' : 'NOTE'),
+        // El movimiento nombra UN cambio en su renglón de "antes → después";
+        // el estado manda porque es el que mueve la operación. La ocupación
+        // queda igualmente registrada en sus propias columnas.
+        field_label: newStatus ? 'Estado' : newOccupancy ? 'Ocupación' : null,
+        old_value: newStatus ? room.status_name : newOccupancy ? (room.occupancy_name ?? 'Sin registro') : null,
+        new_value: newStatus ? newStatus.name : newOccupancy ? newOccupancy.name : null,
         old_status_id: room.status_id,
         new_status_id: newStatus ? newStatus.id : room.status_id,
         old_status_name: room.status_name,
         new_status_name: newStatus ? newStatus.name : room.status_name,
+        ...ocupacionDelMovimiento,
         severity,
         is_incident: incident,
         closes_incident: mtype?.closes_incident ?? 0,
@@ -276,6 +372,7 @@ export function recordMovement({
         new_status_id: newStatus ? newStatus.id : room.status_id,
         old_status_name: room.status_name,
         new_status_name: newStatus ? newStatus.name : room.status_name,
+        ...ocupacionDelMovimiento,
         severity: incident ? 'alta' : 'normal',
         is_incident: incident,
         closes_incident: closes,
@@ -300,6 +397,8 @@ export function recordMovement({
     update('rooms', room.id, {
       status_id: newStatus ? newStatus.id : room.status_id,
       status_changed_at: newStatus ? t.iso : room.status_changed_at,
+      occupancy_id: newOccupancy ? newOccupancy.id : room.occupancy_id,
+      occupancy_changed_at: newOccupancy ? t.iso : room.occupancy_changed_at,
       updated_at: t.iso,
       updated_by: user.id,
       last_movement_id: primaryId,
@@ -375,10 +474,12 @@ export function recordMovement({
       actor: user,
       before: {
         estado: room.status_name,
+        ocupación: room.occupancy_name ?? null,
         ...Object.fromEntries(detailChanges.map((c) => [c.field.label, c.oldValue])),
       },
       after: {
         estado: finalStatus.name,
+        ocupación: newOccupancy ? newOccupancy.name : (room.occupancy_name ?? null),
         ...Object.fromEntries(detailChanges.map((c) => [c.field.label, c.newValue])),
       },
       reason: baseRow.comment,
@@ -394,6 +495,7 @@ export function recordMovement({
       attachments: attachmentIds.length,
       room: getRoom(room.id),
       statusChanged: !!newStatus,
+      occupancyChanged: !!newOccupancy,
       detailsChanged: detailChanges.length,
     };
   })();
@@ -417,6 +519,7 @@ export function recordBulkMovement({
   roomIds, user, req,
   movementTypeCode = null,
   statusCode = null,
+  occupancyCode = null,
   details = [],
   comment = null,
 }) {
@@ -429,19 +532,25 @@ export function recordBulkMovement({
   if (ids.length > max) {
     throw new MovementError(`El cambio en bloque admite hasta ${max} habitaciones a la vez; seleccionó ${ids.length}.`, 400);
   }
-  if (!movementTypeCode && !statusCode && !(details ?? []).length && !String(comment ?? '').trim()) {
-    throw new MovementError('Elija una acción o un estado para aplicar.', 400);
+  if (!movementTypeCode && !statusCode && !occupancyCode
+      && !(details ?? []).length && !String(comment ?? '').trim()) {
+    throw new MovementError('Elija una acción, un estado o una ocupación para aplicar.', 400);
   }
 
   const bulkId = crypto.randomUUID();
 
   return transaction(() => {
-    // El estado destino se resuelve una vez: es el mismo para todo el lote.
-    const targetCode = statusCode ?? (movementTypeCode
-      ? one(`SELECT s.code FROM movement_types mt
+    // Estado y ocupación destino se resuelven una vez: son los mismos para
+    // todo el lote.
+    const destino = movementTypeCode
+      ? one(`SELECT s.code AS estado, o.code AS ocupacion
+               FROM movement_types mt
                LEFT JOIN room_statuses s ON s.id = mt.target_status_id
-              WHERE mt.code = @code AND mt.active = 1`, { code: movementTypeCode })?.code
-      : null);
+               LEFT JOIN room_occupancies o ON o.id = mt.target_occupancy_id
+              WHERE mt.code = @code AND mt.active = 1`, { code: movementTypeCode })
+      : null;
+    const targetCode = statusCode ?? destino?.estado ?? null;
+    const targetOccupancy = occupancyCode ?? destino?.ocupacion ?? null;
 
     const aplicadas = [];
     const omitidas = [];
@@ -451,21 +560,30 @@ export function recordBulkMovement({
       if (!room) throw new MovementError(`Habitación ${roomId} no encontrada.`, 404);
       if (!room.active) { omitidas.push({ number: room.number, motivo: 'desactivada' }); continue; }
 
-      // Sin acción, sin comentario y ya en el estado destino: no hay nada que
-      // contar. Registrarlo sería ruido en el historial de esa habitación.
-      const sinCambio = !movementTypeCode && !(details ?? []).length
-        && !String(comment ?? '').trim() && room.status_code === targetCode;
-      if (sinCambio) { omitidas.push({ number: room.number, motivo: 'ya estaba en ese estado' }); continue; }
+      // Sin acción, sin comentario y ya en el estado y la ocupación destino:
+      // no hay nada que contar. Registrarlo sería ruido en su historial.
+      const sinAccion = !movementTypeCode && !(details ?? []).length && !String(comment ?? '').trim();
+      const mismoEstado = !targetCode || room.status_code === targetCode;
+      const mismaOcupacion = !targetOccupancy || room.occupancy_code === targetOccupancy;
+      if (sinAccion && mismoEstado && mismaOcupacion) {
+        omitidas.push({
+          number: room.number,
+          motivo: targetOccupancy && !targetCode ? 'ya tenía esa ocupación' : 'ya estaba en ese estado',
+        });
+        continue;
+      }
 
       try {
         const r = recordMovement({
-          roomId, user, req, movementTypeCode, statusCode, details, comment, photos: [],
+          roomId, user, req, movementTypeCode, statusCode, occupancyCode, details, comment, photos: [],
         });
         aplicadas.push({
           roomId, number: r.room.number, floor: r.room.floor_name,
           batchId: r.batchId, movementId: r.primaryId,
           statusBefore: room.status_name, status: r.room.status_name,
           statusChanged: r.statusChanged,
+          occupancyBefore: room.occupancy_name ?? null, occupancy: r.room.occupancy_name ?? null,
+          occupancyChanged: r.occupancyChanged,
         });
       } catch (err) {
         // El error se enriquece con la habitación: "618: requiere comentario"
@@ -493,10 +611,16 @@ export function recordBulkMovement({
       entityLabel: `Cambio en bloque · ${aplicadas.length === 1 ? '1 habitación' : `${aplicadas.length} habitaciones`}`,
       action: 'bulk_movement',
       actor: user,
-      before: { estados: Object.fromEntries(aplicadas.map((a) => [a.number, a.statusBefore])) },
+      before: {
+        estados: Object.fromEntries(aplicadas.map((a) => [a.number, a.statusBefore])),
+        ...(aplicadas.some((a) => a.occupancyChanged)
+          ? { ocupaciones: Object.fromEntries(aplicadas.map((a) => [a.number, a.occupancyBefore])) } : {}),
+      },
       after: {
-        accion: movementTypeCode ?? 'Cambio de estado',
+        accion: movementTypeCode ?? (statusCode ? 'Cambio de estado' : 'Cambio de ocupación'),
         estados: Object.fromEntries(aplicadas.map((a) => [a.number, a.status])),
+        ...(aplicadas.some((a) => a.occupancyChanged)
+          ? { ocupaciones: Object.fromEntries(aplicadas.map((a) => [a.number, a.occupancy])) } : {}),
         omitidas: omitidas.map((o) => `${o.number} (${o.motivo})`),
       },
       reason: String(comment ?? '').trim() || null,

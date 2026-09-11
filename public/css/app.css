@@ -122,6 +122,16 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .flag.inc{background:var(--danger-bg);color:var(--danger)}
 .flag.rec{background:var(--warn-bg);color:var(--warn)}
 .flag.att{background:var(--info-bg);color:var(--info)}
+/* Ocupación: se dibuja siempre, también cuando está vacante. En una hoja de
+   piso "no dice nada" y "no hay huésped" no pueden verse igual. */
+.flag.occ{color:var(--oc);background:color-mix(in srgb,var(--oc) 12%,transparent);
+  border:1px solid color-mix(in srgb,var(--oc) 34%,transparent);max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@supports not (color:color-mix(in srgb,red 10%,transparent)){
+  .flag.occ{background:var(--surface-2);border-color:var(--line)}
+}
+/* Con huésped dentro, el canto derecho lo dice sin tener que leer. */
+.room[data-occupied="1"]{border-right:4px solid var(--oc)}
 
 /* ------------------------------------------------- selección en bloque */
 /* En modo bloque el rack deja de abrir expedientes y pasa a seleccionar:

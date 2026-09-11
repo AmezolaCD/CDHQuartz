@@ -15,7 +15,7 @@ import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
 import {
-  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
+  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_OCCUPANCIES, ROOM_TYPES,
   CATEGORIES, MOVEMENT_TYPES, SETTINGS,
 } from './catalog.js';
 
@@ -61,20 +61,41 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
     }
 
     // ---------------------------------------------------------- Permisos
+    // Se anota cuáles nacen en esta pasada: un permiso que hasta ahora no
+    // existía no pudo ser quitado a nadie a propósito, así que sí debe llegar
+    // a los roles del sistema que lo declaran (ver más abajo).
+    const permisosNuevos = new Set();
     for (const p of PERMISSIONS) {
-      if (!idPor('permissions', p.code)) { insert('permissions', p); anotar('Permiso', `${p.name} (${p.code})`); }
+      if (!idPor('permissions', p.code)) {
+        insert('permissions', p);
+        permisosNuevos.add(p.code);
+        anotar('Permiso', `${p.name} (${p.code})`);
+      }
     }
 
     // ------------------------------------------------------------- Roles
     for (const r of ROLES) {
       const { permissions, ...fila } = r;
-      if (!idPor('roles', r.code)) {
+      const existente = one('SELECT id, name, is_system FROM roles WHERE code = @code', { code: r.code });
+      if (!existente) {
         const id = insert('roles', fila);
         for (const code of permissions) {
           const pid = idPor('permissions', code);
           if (pid) insert('role_permissions', { role_id: id, permission_id: pid });
         }
         anotar('Rol', r.name);
+        continue;
+      }
+      // Un rol del sistema recibe los permisos que ACABAN de crearse y que el
+      // catálogo le asigna. Los permisos que ya existían no se tocan: quitar
+      // uno es una decisión del administrador y se respeta.
+      if (!existente.is_system || !permisosNuevos.size) continue;
+      for (const code of permissions) {
+        if (!permisosNuevos.has(code)) continue;
+        const pid = idPor('permissions', code);
+        if (!pid) continue;
+        insert('role_permissions', { role_id: existente.id, permission_id: pid });
+        anotar('Permiso nuevo al rol', `${existente.name}: ${code}`);
       }
     }
     // Invariante del sistema: el rol Administrador conserva SIEMPRE todos los
@@ -98,6 +119,19 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
         insert('room_statuses', { ...s, sort_order: i + 1, is_system: 1 });
         anotar('Estado', s.name);
       }
+    });
+
+    // -------------------------------------------------------- Ocupaciones
+    ROOM_OCCUPANCIES.forEach((o, i) => {
+      if (idPor('room_occupancies', o.code)) return;
+      const { target_status, ...fila } = o;
+      insert('room_occupancies', {
+        ...fila,
+        target_status_id: target_status ? idPor('room_statuses', target_status) : null,
+        sort_order: i + 1,
+        is_system: 1,
+      });
+      anotar('Ocupación', o.name);
     });
 
     // -------------------------------------------------- Tipos de habitación
@@ -133,11 +167,12 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
     // ------------------------------------------------ Tipos de movimiento
     for (const m of MOVEMENT_TYPES) {
       if (idPor('movement_types', m.code)) continue;
-      const { category, target_status, ...fila } = m;
+      const { category, target_status, target_occupancy, ...fila } = m;
       insert('movement_types', {
         ...fila,
         category_id: category ? idPor('categories', category) : null,
         target_status_id: target_status ? idPor('room_statuses', target_status) : null,
+        target_occupancy_id: target_occupancy ? idPor('room_occupancies', target_occupancy) : null,
       });
       anotar('Acción', m.name);
     }
@@ -169,6 +204,26 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       const campos = [...new Set(faltantes.map((x) => x.label))];
       anotar('Detalles sembrados',
         `${faltantes.length} valores en habitaciones existentes (${campos.join(', ')})`);
+    }
+
+    // ------------------------- Ocupación inicial de las habitaciones vivas
+    // Sólo rellena lo que está en NULL: la columna acaba de nacer, así que
+    // nadie pudo decidir su valor. Una habitación cuyo ESTADO era "Ocupada"
+    // arranca como ocupada; el resto, vacante. Nunca se cambia un estado.
+    const vacante = one('SELECT id FROM room_occupancies WHERE is_default = 1 AND active = 1 ORDER BY sort_order')?.id;
+    const ocupada = one("SELECT id FROM room_occupancies WHERE code = 'OCUPADA'")?.id;
+    if (vacante) {
+      const sinOcupacion = one('SELECT COUNT(*) AS n FROM rooms WHERE occupancy_id IS NULL').n;
+      if (sinOcupacion) {
+        if (ocupada) {
+          db.prepare(`
+            UPDATE rooms SET occupancy_id = @ocupada
+             WHERE occupancy_id IS NULL
+               AND status_id = (SELECT id FROM room_statuses WHERE code = 'OCUPADA')`).run({ ocupada });
+        }
+        db.prepare('UPDATE rooms SET occupancy_id = @vacante WHERE occupancy_id IS NULL').run({ vacante });
+        anotar('Ocupación sembrada', `${sinOcupacion} habitaciones existentes`);
+      }
     }
 
     // ------------------------------------------------- Opciones explícitas
