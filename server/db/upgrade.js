@@ -19,6 +19,18 @@ import {
   CATEGORIES, MOVEMENT_TYPES, SETTINGS,
 } from './catalog.js';
 
+/**
+ * Nombres del catálogo que el propio CDH mejora al actualizar. No es una
+ * migración de datos: cambia una etiqueta, nunca una bandera ni una relación,
+ * y sólo cuando nadie la ha tocado (ver más abajo).
+ */
+const RENOMBRES = [
+  // "Ocupada" y "Vacante" se confundían con el estado de la habitación; en el
+  // pasillo lo que hace falta saber es si hay alguien dentro.
+  { tabla: 'room_occupancies', code: 'VACANTE', de: 'Vacante', a: 'Huésped ausente' },
+  { tabla: 'room_occupancies', code: 'OCUPADA', de: 'Ocupada', a: 'Huésped ahí' },
+];
+
 function parseArgs(argv) {
   const opts = { dryRun: false, timezone: null, promote: null };
   for (const a of argv) {
@@ -133,6 +145,20 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       });
       anotar('Ocupación', o.name);
     });
+
+    // Un renombre de catálogo sólo se aplica si la fila conserva EXACTAMENTE
+    // el nombre con el que se publicó. Si el hotel ya la renombró desde
+    // Administración, su decisión manda y aquí no ocurre nada: la condición se
+    // agota sola, así que la segunda pasada tampoco cambia nada.
+    //
+    // El historial no se toca: los movimientos guardan una copia del nombre
+    // que la ocupación tenía cuando se registraron, y así debe seguir.
+    for (const r of RENOMBRES) {
+      const fila = one(`SELECT id, name FROM ${r.tabla} WHERE code = @code`, { code: r.code });
+      if (!fila || fila.name !== r.de) continue;
+      db.prepare(`UPDATE ${r.tabla} SET name = @a WHERE id = @id`).run({ a: r.a, id: fila.id });
+      anotar('Nombre más claro', `${r.de} → ${r.a}`);
+    }
 
     // -------------------------------------------------- Tipos de habitación
     for (const t of ROOM_TYPES) {

@@ -106,9 +106,9 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 /* ------------------------------------------------- cuadrícula del rack */
 .rack{overflow-x:auto;padding:14px 16px 18px}
 .rack-grid{display:grid;gap:8px;min-width:min-content}
-.rack-empty{border:1px dashed var(--line);border-radius:var(--r);background:repeating-linear-gradient(135deg,transparent,transparent 5px,var(--surface-2) 5px,var(--surface-2) 10px);min-height:76px}
+.rack-empty{border:1px dashed var(--line);border-radius:var(--r);background:repeating-linear-gradient(135deg,transparent,transparent 5px,var(--surface-2) 5px,var(--surface-2) 10px);min-height:96px}
 
-.room{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:104px;min-height:76px;
+.room{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:104px;min-height:96px;
   padding:9px 10px;border:1px solid var(--line);border-left:4px solid var(--st,var(--ink-4));border-radius:var(--r);
   background:var(--surface);box-shadow:var(--sh-1);text-align:left;transition:transform .1s,box-shadow .12s,border-color .12s}
 .room:hover{transform:translateY(-2px);box-shadow:var(--sh-2)}
@@ -122,13 +122,18 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .flag.inc{background:var(--danger-bg);color:var(--danger)}
 .flag.rec{background:var(--warn-bg);color:var(--warn)}
 .flag.att{background:var(--info-bg);color:var(--info)}
-/* Ocupación: se dibuja siempre, también cuando está vacante. En una hoja de
-   piso "no dice nada" y "no hay huésped" no pueden verse igual. */
-.flag.occ{color:var(--oc);background:color-mix(in srgb,var(--oc) 12%,transparent);
-  border:1px solid color-mix(in srgb,var(--oc) 34%,transparent);max-width:100%;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Ocupación: renglón propio, no un distintivo más. Se dibuja siempre, también
+   cuando no hay huésped —"no dice nada" y "no hay nadie" no pueden verse
+   igual— y el nombre se parte en dos líneas antes que recortarse: "Huésped
+   ahí" y "Huésped ausente" se distinguen por la última palabra. */
+.room .occ{display:flex;align-items:flex-start;gap:4px;font-size:10px;font-weight:700;
+  color:var(--oc);line-height:1.25;overflow-wrap:anywhere;
+  background:color-mix(in srgb,var(--oc) 11%,transparent);
+  border:1px solid color-mix(in srgb,var(--oc) 30%,transparent);
+  border-radius:5px;padding:2px 5px;margin-top:1px}
+.room .occ svg{flex:none;margin-top:1px}
 @supports not (color:color-mix(in srgb,red 10%,transparent)){
-  .flag.occ{background:var(--surface-2);border-color:var(--line)}
+  .room .occ{background:var(--surface-2);border-color:var(--line)}
 }
 /* Con huésped dentro, el canto derecho lo dice sin tener que leer. */
 .room[data-occupied="1"]{border-right:4px solid var(--oc)}
@@ -387,7 +392,7 @@ tbody tr:hover{background:var(--surface-2)}
 /* Tablet: objetivos táctiles más grandes */
 @media (pointer:coarse){
   .btn,input,select,textarea{min-height:46px}
-  .room{min-height:88px;min-width:110px}
+  .room{min-height:104px;min-width:110px}
   .quick button{min-height:84px}
   .list-item{padding:14px 16px}
 }

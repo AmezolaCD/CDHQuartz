@@ -8,21 +8,24 @@ import { bulkActivo, bulkAlternar, bulkPiso, bulkPuedeUsarse, montarBarraBloque 
 
 /**
  * Etiqueta de ocupación de una habitación. Se dibuja SIEMPRE, también cuando
- * está vacante: en una hoja de piso, "no dice nada" y "no hay huésped" tienen
+ * no hay huésped: en una hoja de piso, "no dice nada" y "no hay nadie" tienen
  * que distinguirse a simple vista.
+ *
+ * Ocupa su propio renglón de la tarjeta, no la fila de distintivos: el nombre
+ * completo importa —"Huésped ahí" y "Huésped ausente" se diferencian por la
+ * última palabra— y ahí cabe aunque tenga que partirse en dos líneas.
  */
 export function occupancyTag(r, size = 10) {
-  if (!r.occupancy_code) {
-    return `<span class="flag occ" style="--oc:var(--ink-4)" title="Ocupación sin registrar">${
-      icon('user', size)}Sin registro</span>`;
-  }
-  return `<span class="flag occ" style="--oc:${esc(r.occupancy_color)}" title="Ocupación: ${esc(r.occupancy_name)}">${
-    icon(r.occupancy_icon, size)}${esc(r.occupancy_name)}</span>`;
+  const [color, nombre, ico] = r.occupancy_code
+    ? [esc(r.occupancy_color), esc(r.occupancy_name), r.occupancy_icon]
+    : ['var(--ink-4)', 'Ocupación sin registrar', 'user'];
+  return `<span class="occ" style="--oc:${color}" title="Ocupación: ${nombre}">${
+    icon(ico, size)}<span>${nombre}</span></span>`;
 }
 
 /** Tarjeta compacta de habitación para el mapa del piso. */
 export function roomCard(r) {
-  const flags = [occupancyTag(r)];
+  const flags = [];
   if (r.incidentCount) flags.push(`<span class="flag inc" title="Incidencias abiertas">${icon('alert', 10)}${r.incidentCount}</span>`);
   if (r.recurrenceCount >= 2) flags.push(`<span class="flag rec" title="Reincidente">${icon('repeat', 10)}${r.recurrenceCount}</span>`);
   if (!r.incidentCount && r.counts_attention) flags.push(`<span class="flag att">${icon('bell', 10)}</span>`);
@@ -32,6 +35,7 @@ export function roomCard(r) {
       title="Habitación ${esc(r.number)} — ${esc(r.status_name)} · ${esc(r.occupancy_name ?? 'ocupación sin registrar')}">
     <span class="num">${esc(r.number)}</span>
     <span class="st">${icon(r.status_icon, 11)}<span>${esc(r.status_name)}</span></span>
+    ${occupancyTag(r)}
     <span class="flags">${flags.join('')}</span>
   </button>`;
 }

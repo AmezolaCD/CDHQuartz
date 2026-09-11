@@ -64,7 +64,7 @@ router.get('/floors/:id/map', asyncRoute((req, res) => {
       JOIN rooms r ON r.status_id = s.id AND r.floor_id = @id AND r.active = 1
      GROUP BY s.id ORDER BY s.sort_order`, { id: floor.id });
 
-  // Sólo se anuncian las ocupaciones con habitaciones en el piso: "Vacante 0"
+  // Sólo se anuncian las ocupaciones con habitaciones en el piso: una con cero
   // no le dice nada a quien está haciendo la ronda.
   const occupancySummary = occupancyBreakdown(floor.id).filter((o) => o.rooms > 0);
 
