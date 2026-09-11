@@ -219,6 +219,63 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
 docker compose exec cdh npm run upgrade   # pone al día el catálogo
 ```
 
+## Acceso privado con Tailscale
+
+Alternativa a la anterior para **usar un equipo propio —incluso una laptop—
+como servidor**, sin dominio, sin IP fija y sin abrir un solo puerto. Tailscale
+crea una red privada entre los equipos del hotel; el CDH queda accesible con
+HTTPS válido **sólo para los dispositivos de esa red**, nunca desde internet.
+
+Aquí **no** se usa `docker-compose.caddy.yml`: el HTTPS lo pone Tailscale.
+
+```bash
+# 1. En el equipo servidor: instale Tailscale (tailscale.com/download) e
+#    inicie sesión. En la consola (login.tailscale.com), sección DNS, active
+#    MagicDNS y HTTPS Certificates: sin eso no puede emitir el certificado.
+
+# 2. Levante el CDH. CDH_BIND se queda en 127.0.0.1: el servicio no debe
+#    asomarse ni a la red Wi-Fi local.
+cp .env.example .env          # defina CDH_SEED_PASSWORD y CDH_TZ
+docker compose up -d --build
+
+# 3. Publíquelo en la red privada. La configuración persiste entre reinicios.
+tailscale serve --bg 3000
+tailscale serve status        # devuelve https://<equipo>.<tailnet>.ts.net
+```
+
+Compruebe que la cookie de sesión viaja marcada como segura — es lo que delata
+un proxy mal puesto:
+
+```bash
+curl -s -D - -o /dev/null -X POST https://<equipo>.<tailnet>.ts.net/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"sistemas","password":"..."}' | grep -i set-cookie
+# debe incluir: HttpOnly; Secure; SameSite=Lax
+```
+
+**Los dispositivos del personal.** No hace falta una cuenta por persona: en la
+consola, *Settings → Keys → Generate auth key* (reutilizable). Cada teléfono
+instala Tailscale, entra con esa clave y queda en la red. Después abren
+`https://<equipo>.<tailnet>.ts.net` y lo agregan a la pantalla de inicio.
+
+### En Windows
+
+| Detalle | Qué hacer |
+|---|---|
+| Terminal | PowerShell, en la carpeta del proyecto para los comandos `docker` |
+| `curl` | Escriba **`curl.exe`**: `curl` a secas es otro comando y confunde el resultado |
+| `tailscale` no reconocido | Use la ruta completa: `& "C:\Program Files\Tailscale\tailscale.exe" serve --bg 3000` |
+| Docker | Docker Desktop debe estar **abierto**; configúrelo para iniciar con la sesión |
+| Suspensión | Energía → *Nunca* con corriente alterna, y *No hacer nada* al cerrar la tapa |
+
+### Lo que hay que tener claro
+
+El equipo tiene que estar **despierto, enchufado y conectado**: si se suspende,
+el CDH se cae para todo el hotel. Y la base con el historial vive en ese disco,
+así que el respaldo **fuera del equipo** deja de ser una buena práctica y pasa a
+ser indispensable. Sirve muy bien para una prueba piloto con el personal real;
+para producción permanente, use la puesta en producción de la sección anterior.
+
 ## Distribución real: 155 habitaciones en 9 pisos
 
 Tomada del rack vertical del hotel. El índice de columna corresponde a la
