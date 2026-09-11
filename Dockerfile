@@ -1,9 +1,12 @@
 # ============================================================================
 # CDH — Control de Detalles por Habitación | Hotel Quartz
 #
-# better-sqlite3 incluye binarios precompilados para linuxmusl-x64/arm64, así
-# que Alpine no necesita cadena de compilación: la imagen final no lleva gcc,
-# python ni node-gyp.
+# better-sqlite3 publica sus binarios DENTRO del paquete (prebuilds/), uno por
+# plataforma, incluidos linuxmusl-x64 y linuxmusl-arm64. Pero el paquete también
+# publica su binding.gyp, y eso hace que npm lance `node-gyp rebuild` por su
+# cuenta: sin --ignore-scripts la imagen exige python y un compilador, y la
+# construcción falla en Alpine. Con la bandera, el módulo carga el binario que
+# ya trae y la imagen final no lleva gcc, python ni node-gyp.
 # ============================================================================
 
 # ------------------------------------------------------------- dependencias
@@ -12,7 +15,13 @@ WORKDIR /app
 # .npmrc lleva engine-strict: si la base cambiara a un Node <22, falla aquí
 # con un mensaje claro en vez de reventar en tiempo de ejecución.
 COPY package.json package-lock.json .npmrc ./
-RUN npm ci --omit=dev && npm cache clean --force
+# --ignore-scripts evita la compilación innecesaria. Ningún paquete del árbol
+# declara un script de instalación propio, así que no se pierde nada.
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# Comprobación en tiempo de construcción: si el binario nativo no cargara, la
+# imagen falla aquí con un mensaje claro, en vez de en el hotel al arrancar.
+RUN node -e "const D=require('better-sqlite3'); new D(':memory:').exec('CREATE TABLE t(a)'); console.log('binario nativo OK');"
 
 # ----------------------------------------------------------------- runtime
 FROM node:22-alpine AS runtime
