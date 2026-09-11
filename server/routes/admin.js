@@ -119,7 +119,17 @@ catalogResource('statuses', {
     code: 'text', name: 'text', icon: 'text', color: 'text', description: 'text',
     counts_ready: 'bool', counts_cleaning: 'bool', counts_maintenance: 'bool',
     counts_blocked: 'bool', counts_attention: 'bool', counts_pending: 'bool',
+    attention_weight: 'int', requires_vacant: 'bool',
     sort_order: 'int', active: 'bool',
+  },
+});
+
+catalogResource('occupancies', {
+  table: 'room_occupancies', entityType: 'room_occupancy', label: 'ocupación', permission: 'admin.catalog',
+  columns: {
+    code: 'text', name: 'text', icon: 'text', color: 'text', description: 'text',
+    counts_occupied: 'bool', do_not_disturb: 'bool', is_default: 'bool',
+    target_status_id: 'int', sort_order: 'int', active: 'bool',
   },
 });
 
@@ -150,7 +160,8 @@ catalogResource('fields', {
 catalogResource('movement-types', {
   table: 'movement_types', entityType: 'movement_type', label: 'tipo de movimiento', permission: 'admin.catalog',
   columns: {
-    code: 'text', name: 'text', category_id: 'int', target_status_id: 'int', icon: 'text',
+    code: 'text', name: 'text', category_id: 'int', target_status_id: 'int',
+    target_occupancy_id: 'int', icon: 'text',
     severity: 'text', is_incident: 'bool', closes_incident: 'bool', closes_scope: 'text',
     requires_comment: 'bool',
     requires_photo: 'bool', allows_photo: 'bool', is_quick_action: 'bool',
@@ -200,6 +211,10 @@ router.post('/rooms', requirePermission('admin.rooms'), asyncRoute((req, res) =>
   const status = one('SELECT * FROM room_statuses WHERE code = @c AND active = 1',
     { c: b.statusCode ?? 'DISPONIBLE' });
   if (!status) throw new AdminError('Estado inicial no válido.');
+  // Una habitación nueva nace sin huésped; dejar la ocupación en blanco haría
+  // que el rack no dijera nada sobre ella.
+  const occupancy = one(
+    'SELECT * FROM room_occupancies WHERE is_default = 1 AND active = 1 ORDER BY sort_order LIMIT 1');
 
   const gridRow = int(b.gridRow) ?? floor.number;
   const gridCol = int(b.gridCol) ?? ((one(
@@ -210,8 +225,10 @@ router.post('/rooms', requirePermission('admin.rooms'), asyncRoute((req, res) =>
     const now = new Date().toISOString();
     const id = insert('rooms', {
       number, floor_id: floor.id, room_type_id: int(b.roomTypeId),
-      status_id: status.id, grid_row: gridRow, grid_col: gridCol,
-      notes: b.notes ?? null, active: 1, status_changed_at: now, updated_at: now,
+      status_id: status.id, occupancy_id: occupancy?.id ?? null,
+      grid_row: gridRow, grid_col: gridCol,
+      notes: b.notes ?? null, active: 1, status_changed_at: now,
+      occupancy_changed_at: occupancy ? now : null, updated_at: now,
       updated_by: req.user.id, created_at: now,
     });
     // Se siembran los valores por defecto de todos los campos activos.

@@ -323,6 +323,42 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     assert.equal(one("SELECT value FROM settings WHERE key = 'recurrence_window_days'").value, '45');
   });
 
+  test('una base anterior a la ocupación queda al día sin tocar estados', () => {
+    const { upgrade } = upgradeMod;
+    // Se simula la base del hotel antes de esta versión: el permiso todavía no
+    // existe y ninguna habitación tiene ocupación asignada. El catálogo de
+    // ocupación no se borra porque el historial ya registrado lo referencia, y
+    // el historial es inmutable: eso es justo lo que debe pasar.
+    db.prepare("UPDATE rooms SET status_id = (SELECT id FROM room_statuses WHERE code='OCUPADA') WHERE number = '303'").run();
+    db.prepare('UPDATE rooms SET occupancy_id = NULL, occupancy_changed_at = NULL').run();
+    db.prepare("DELETE FROM permissions WHERE code = 'room.occupancy'").run();
+
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Ocupación sembrada'), 'rellena las habitaciones vivas');
+
+    assert.equal(one('SELECT COUNT(*) n FROM rooms WHERE occupancy_id IS NULL').n, 0,
+      'ninguna habitación se queda sin ocupación');
+    assert.equal(getRoomByNumber('303').occupancy_code, 'OCUPADA',
+      'la que tenía el estado "Ocupada" arranca con huésped');
+    assert.equal(getRoomByNumber('304').occupancy_code, 'VACANTE');
+    assert.equal(getRoomByNumber('303').status_code, 'OCUPADA', 'el estado no se toca');
+
+    // El permiso nuevo tiene que llegar a los roles del sistema que lo usan:
+    // hasta ahora no existía, así que nadie pudo habérselo quitado.
+    const tienePermiso = (rol) => one(`
+      SELECT 1 x FROM role_permissions rp
+        JOIN roles r ON r.id = rp.role_id
+        JOIN permissions p ON p.id = rp.permission_id
+       WHERE r.code = @rol AND p.code = 'room.occupancy'`, { rol });
+    for (const rol of ['AMA', 'RECEPCION', 'SUPERVISOR', 'ADMIN']) {
+      assert.ok(tienePermiso(rol), `el rol ${rol} debe recibir room.occupancy`);
+    }
+    // Gerencia sólo consulta: el catálogo no le asigna el permiso.
+    assert.equal(tienePermiso('GERENCIA'), undefined);
+
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
   test('la simulación no escribe nada', () => {
     const { upgrade } = upgradeMod;
     db.prepare("DELETE FROM settings WHERE key = 'max_photo_mb'").run();
@@ -790,6 +826,124 @@ describe('Incidencias abiertas por reporte', () => {
   });
 });
 
+describe('Ocupación: ¿hay huésped en la habitación?', () => {
+  // La ocupación es un EJE APARTE del estado. El estado dice en qué punto del
+  // ciclo de limpieza va la habitación; la ocupación, si hay alguien dentro.
+  // Sin los dos, "En limpieza" no distingue una habitación de salida de una
+  // que el huésped sigue usando, y es justo lo que Ama de Llaves necesita ver.
+
+  test('toda habitación arranca vacante', () => {
+    const room = getRoomByNumber('501');
+    assert.equal(room.occupancy_code, 'VACANTE');
+    assert.equal(room.counts_occupied, 0);
+  });
+
+  test('la entrada de huésped saca la habitación de la venta en el mismo movimiento', () => {
+    const room = getRoomByNumber('502');
+    assert.equal(room.status_code, 'DISPONIBLE');
+
+    const res = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
+    assert.equal(res.room.occupancy_code, 'OCUPADA');
+    assert.equal(res.room.status_code, 'OCUPADA', 'una habitación con huésped no puede seguir a la venta');
+    assert.ok(res.occupancyChanged && res.statusChanged);
+
+    // Un solo movimiento cuenta las dos cosas: no hay que cruzar dos renglones.
+    assert.equal(res.movementIds.length, 1);
+    const m = one('SELECT * FROM movements WHERE id = @id', { id: res.primaryId });
+    assert.equal(m.old_occupancy_name, 'Vacante');
+    assert.equal(m.new_occupancy_name, 'Ocupada');
+    assert.equal(m.old_status_id, room.status_id);
+    assert.equal(m.new_status_name, 'Ocupada');
+  });
+
+  test('una habitación ocupada no puede quedar disponible', () => {
+    const room = getRoomByNumber('503');
+    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
+    assert.throws(
+      () => recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE' }),
+      (e) => e.status === 409 && /salida del huésped/.test(e.message));
+    assert.equal(getRoomByNumber('503').status_code, 'OCUPADA', 'nada cambió');
+  });
+
+  test('la limpieza y la inspección sí ocurren con el huésped en casa', () => {
+    // Una habitación de "se queda otra noche" se limpia e inspecciona igual;
+    // lo único que no puede es volver a venderse.
+    const room = getRoomByNumber('504');
+    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
+
+    const limpia = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.equal(limpia.room.status_code, 'LIMPIEZA_TERMINADA');
+    assert.equal(limpia.room.occupancy_code, 'OCUPADA', 'limpiar no echa al huésped');
+
+    const inspeccion = recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'INSPECTION' });
+    assert.equal(inspeccion.room.status_code, 'INSPECCIONADA');
+    assert.equal(inspeccion.room.occupancy_code, 'OCUPADA');
+  });
+
+  test('liberar una habitación de salida la deja vacante sola', () => {
+    const room = getRoomByNumber('505');
+    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
+    const salida = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_OUT' });
+    assert.equal(salida.room.occupancy_code, 'SALIDA');
+    assert.equal(salida.room.status_code, 'OCUPADA', 'la salida no decide el estado: eso lo reporta la camarista');
+
+    const libre = recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'RELEASE' });
+    assert.equal(libre.room.status_code, 'DISPONIBLE');
+    assert.equal(libre.room.occupancy_code, 'VACANTE', 'a la venta y con huésped es una contradicción');
+  });
+
+  test('el "no molestar" cuenta como habitación con huésped', () => {
+    const room = getRoomByNumber('506');
+    const res = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'DND_ON' });
+    assert.equal(res.room.occupancy_code, 'NO_MOLESTAR');
+    assert.equal(res.room.do_not_disturb, 1);
+    assert.equal(res.room.counts_occupied, 1);
+
+    const fuera = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'DND_OFF' });
+    assert.equal(fuera.room.occupancy_code, 'OCUPADA');
+  });
+
+  test('sin el permiso de ocupación no se registra la entrada', () => {
+    const room = getRoomByNumber('508');
+    const sinPermiso = {
+      ...user('amadellaves'),
+      permissions: user('amadellaves').permissions.filter((p) => p !== 'room.occupancy'),
+    };
+    assert.throws(
+      () => recordMovement({ roomId: room.id, user: sinPermiso, occupancyCode: 'OCUPADA' }),
+      (e) => e.status === 403);
+  });
+
+  test('los contadores separan ocupación de estado', () => {
+    const o = stats.overview();
+    const ocupadasReales = one(`
+      SELECT COUNT(*) n FROM rooms r
+        JOIN room_occupancies oc ON oc.id = r.occupancy_id
+       WHERE r.active = 1 AND oc.counts_occupied = 1`).n;
+    assert.equal(o.ocupadas, ocupadasReales);
+    assert.ok(o.ocupacion.some((x) => x.code === 'VACANTE'), 'el reparto nombra cada ocupación');
+    assert.equal(o.ocupacion.reduce((n, x) => n + x.rooms, 0),
+      one('SELECT COUNT(*) n FROM rooms WHERE active = 1').n);
+  });
+
+  test('recepción marca en bloque las salidas de un piso', () => {
+    const ids = ['510', '512', '513'].map((n) => getRoomByNumber(n).id);
+    const r = recordBulkMovement({
+      roomIds: ids, user: user('recepcion'), occupancyCode: 'SALIDA',
+      comment: 'Salidas del día.',
+    });
+    assert.equal(r.aplicadas.length, 3);
+    for (const id of ids) {
+      assert.equal(one(`SELECT o.code FROM rooms r JOIN room_occupancies o ON o.id = r.occupancy_id
+                         WHERE r.id = @id`, { id }).code, 'SALIDA');
+    }
+    // Repetir el lote no ensucia el historial: ya estaban así.
+    assert.throws(
+      () => recordBulkMovement({ roomIds: ids, user: user('recepcion'), occupancyCode: 'SALIDA' }),
+      (e) => /ya tenía esa ocupación/.test(e.message));
+  });
+});
+
 describe('Cambios en bloque', () => {
   const idsDe = (...numeros) => numeros.map((n) => getRoomByNumber(String(n)).id);
 
@@ -882,6 +1036,6 @@ describe('Cambios en bloque', () => {
     assert.throws(() => recordBulkMovement({ roomIds: [], user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' }),
       (e) => /al menos una habitación/.test(e.message));
     assert.throws(() => recordBulkMovement({ roomIds: idsDe(1001), user: user('amadellaves') }),
-      (e) => /acción o un estado/.test(e.message));
+      (e) => /Elija una acción, un estado o una ocupación/.test(e.message));
   });
 });

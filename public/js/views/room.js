@@ -48,13 +48,19 @@ export async function openRoom(roomId, { onChange = null, tab = 'detalle' } = {}
           <div class="row-between wrap" style="margin-bottom:10px">
             <div class="row wrap" style="gap:8px">
               ${statusChip({ name: r.status_name, icon: r.status_icon, color: r.status_color }, 14)}
+              ${r.occupancy_code
+                ? statusChip({ name: r.occupancy_name, icon: r.occupancy_icon, color: r.occupancy_color }, 14)
+                : ''}
               ${r.incidentCount ? `<span class="chip danger">${icon('alert', 13)}${r.incidentCount} incidencia${r.incidentCount > 1 ? 's' : ''} abierta${r.incidentCount > 1 ? 's' : ''}</span>` : ''}
               ${data.recurrence.incidents >= (data.recurrence.thresholds[0] ?? 2)
                 ? `<span class="chip warn">${icon('repeat', 13)}Reincidente · ${data.recurrence.incidents} en ${data.recurrence.window} d</span>` : ''}
             </div>
             <span class="tiny muted">${data.movementCount} movimiento${data.movementCount === 1 ? '' : 's'}</span>
           </div>
-          <div class="row wrap small muted" style="gap:14px">
+          ${r.do_not_disturb ? `<div class="hint-block" style="margin:10px 0 0;border-color:#ddd6fe;background:#f5f3ff">
+            ${icon('ban', 14)}<span><strong>No molestar.</strong> El huésped pidió que no se entre a la
+            habitación: no se registra limpieza hasta que se retire el aviso.</span></div>` : ''}
+          <div class="row wrap small muted" style="gap:14px;margin-top:10px">
             <span>${icon('clock', 13)} Última actualización: <strong class="bold" style="color:var(--ink-2)">${
               r.updated_at ? relative(r.updated_at) : 'sin registro'}</strong></span>
             ${r.updated_by_name ? `<span>${icon('user', 13)} ${esc(r.updated_by_name)}</span>` : ''}
@@ -246,7 +252,10 @@ async function actionPanel(panel, data, reload) {
     q.appendChild(el(`<button data-action="${esc(a.code)}" data-severity="${esc(a.severity)}">
       <span style="color:var(--plum-600)">${icon(a.icon, 19)}</span>
       <span class="qn">${esc(a.name)}</span>
-      <span class="qs">${a.target_status_name ? `→ ${esc(a.target_status_name)}` : 'Sin cambio de estado'}</span>
+      <span class="qs">${[
+        a.target_status_name ? `→ ${esc(a.target_status_name)}` : null,
+        a.target_occupancy_name ? `→ ${esc(a.target_occupancy_name)}` : null,
+      ].filter(Boolean).join(' · ') || 'Sin cambio de estado'}</span>
     </button>`));
   }
   q.addEventListener('click', (e) => {
@@ -254,6 +263,46 @@ async function actionPanel(panel, data, reload) {
     if (btn) actionForm(room, actions.find((a) => a.code === btn.dataset.action), reload);
   });
   panel.appendChild(grid);
+
+  if (data.canEditOccupancy && state.occupancies.length) {
+    // El estado y la ocupación se cambian por separado a propósito: son ejes
+    // distintos y mezclarlos en un solo formulario invita a equivocarse.
+    const oc = el(`<div class="card" style="margin-top:14px">
+      <div class="card-head"><h2>¿Hay huésped en la habitación?</h2></div>
+      <div class="card-body">
+        <form id="occupancyForm">
+          <div class="field"><label>Ocupación</label>
+            <select name="occupancy">${state.occupancies.map((o) =>
+              `<option value="${esc(o.code)}" ${o.code === room.occupancy_code ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}
+            </select>
+            <span class="hint">Es independiente del estado de limpieza: una habitación se limpia
+            e inspecciona igual con el huésped en casa.</span>
+          </div>
+          <div class="field"><label>Comentario</label>
+            <textarea name="comment" rows="2" placeholder="Motivo del cambio (opcional)"></textarea></div>
+          <button class="btn primary block" type="submit">Registrar ocupación</button>
+        </form>
+      </div></div>`);
+    $('#occupancyForm', oc).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      if (fd.get('occupancy') === room.occupancy_code) return toast('La habitación ya tiene esa ocupación.', 'warn');
+      const btn = $('[type=submit]', e.target);
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
+      try {
+        await api.post(`/api/rooms/${room.id}/movements`, {
+          occupancy: fd.get('occupancy'), comment: fd.get('comment') || null,
+        });
+        toast(`Ocupación actualizada en la habitación ${room.number}.`);
+        await reload('detalle');
+      } catch (err) {
+        toast(err.message, 'error', 5200);
+        btn.disabled = false; btn.textContent = 'Registrar ocupación';
+      }
+      return undefined;
+    });
+    panel.appendChild(oc);
+  }
 
   if (data.canEditStatus) {
     const sc = el(`<div class="card" style="margin-top:14px">
@@ -299,6 +348,9 @@ function actionForm(room, action, reload) {
         <span class="chip plum">${icon('door', 13)}Habitación ${esc(room.number)}</span>
         ${action.category_name ? `<span class="chip">${esc(action.category_name)}</span>` : ''}
         ${action.target_status_name ? `<span class="chip info">${icon('swap', 13)}→ ${esc(action.target_status_name)}</span>` : ''}
+        ${action.target_occupancy_name ? `<span class="chip" style="color:${esc(action.target_occupancy_color)};border-color:${
+          esc(action.target_occupancy_color)}55">${icon(action.target_occupancy_icon ?? 'user', 13)}→ ${
+          esc(action.target_occupancy_name)}</span>` : ''}
         ${action.is_incident ? `<span class="chip danger">${icon('alert', 13)}Abre incidencia</span>` : ''}
       </div>
       <div class="field">
@@ -399,6 +451,10 @@ async function historyPanel(panel, room) {
 
 export function timelineItem(m) {
   const changed = m.field_label && (m.old_value !== null || m.new_value !== null);
+  // Un mismo movimiento puede mover el estado y la ocupación (una entrada de
+  // huésped saca la habitación de la venta): el renglón de "antes → después"
+  // nombra el estado, así que la ocupación necesita el suyo.
+  const ocupacionCambio = m.new_occupancy_name && m.new_occupancy_name !== m.old_occupancy_name;
   return `<div class="tl-item ${m.is_incident ? 'incident' : ''} ${m.action_code === 'STATUS_CHANGE' || m.new_status_name !== m.old_status_name ? 'status' : ''}">
     <div class="tl-card">
       <div class="row-between wrap" style="gap:6px">
@@ -414,6 +470,9 @@ export function timelineItem(m) {
       ${changed ? `<div class="change"><span class="tiny muted">${esc(m.field_label)}:</span>
         <span class="val before">${esc(m.old_value || 'Sin registro')}</span>
         ${icon('chevron', 12)}<span class="val after">${esc(m.new_value || 'Sin registro')}</span></div>` : ''}
+      ${ocupacionCambio && m.field_label !== 'Ocupación' ? `<div class="change"><span class="tiny muted">Ocupación:</span>
+        <span class="val before">${esc(m.old_occupancy_name || 'Sin registro')}</span>
+        ${icon('chevron', 12)}<span class="val after">${esc(m.new_occupancy_name)}</span></div>` : ''}
       ${m.comment ? `<div class="tl-comment">${esc(m.comment)}</div>` : ''}
       ${(m.photos ?? []).length ? `<div class="photos">${m.photos.map((p) => `
         <figure><img src="${esc(p.url)}" data-full="${esc(p.url)}" alt="Foto ${esc(p.kind)} habitación ${esc(m.room_number)}" loading="lazy">

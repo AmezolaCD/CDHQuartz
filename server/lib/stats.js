@@ -128,8 +128,14 @@ export function overview() {
            SUM(s.counts_maintenance) AS mantenimiento,
            SUM(s.counts_blocked)     AS bloqueadas,
            SUM(s.counts_pending)     AS pendientes,
-           SUM(s.counts_attention)   AS atencion
-      FROM rooms r JOIN room_statuses s ON s.id = r.status_id
+           SUM(s.counts_attention)   AS atencion,
+           -- La ocupación es un eje aparte del estado: una habitación en
+           -- limpieza puede tener al huésped en casa o ser de salida.
+           SUM(COALESCE(o.counts_occupied, 0)) AS ocupadas,
+           SUM(COALESCE(o.do_not_disturb, 0))  AS noMolestar
+      FROM rooms r
+      JOIN room_statuses s ON s.id = r.status_id
+      LEFT JOIN room_occupancies o ON o.id = r.occupancy_id
      WHERE r.active = 1`);
 
   const today = localDate(0);
@@ -151,12 +157,29 @@ export function overview() {
     bloqueadas: totals.bloqueadas ?? 0,
     pendientes: totals.pendientes ?? 0,
     requierenAtencion: totals.atencion ?? 0,
+    ocupadas: totals.ocupadas ?? 0,
+    noMolestar: totals.noMolestar ?? 0,
+    ocupacion: occupancyBreakdown(),
     incidenciasAbiertas: incidents.length,
     habitacionesConIncidencia: new Set(incidents.map((i) => i.room_id)).size,
     movimientosHoy: movementsToday,
     incidenciasHoy: incidentsToday,
     fecha: today,
   };
+}
+
+/** Reparto por ocupación: cuántas habitaciones hay en cada una. */
+export function occupancyBreakdown(floorId = null) {
+  return all(`
+    SELECT o.id, o.code, o.name, o.icon, o.color, o.counts_occupied, o.do_not_disturb,
+           o.is_default, o.sort_order,
+           COUNT(r.id) AS rooms
+      FROM room_occupancies o
+      LEFT JOIN rooms r ON r.occupancy_id = o.id AND r.active = 1
+           ${floorId ? 'AND r.floor_id = @floorId' : ''}
+     WHERE o.active = 1
+     GROUP BY o.id
+     ORDER BY o.sort_order`, floorId ? { floorId } : {});
 }
 
 export function statusBreakdown(floorId = null) {
@@ -244,10 +267,13 @@ export function attention({ limit = 60 } = {}) {
            s.code AS status_code, s.name AS status_name, s.icon AS status_icon,
            s.color AS status_color, s.counts_blocked, s.counts_maintenance,
            s.counts_attention, s.attention_weight, r.status_changed_at, r.updated_at,
+           o.code AS occupancy_code, o.name AS occupancy_name, o.icon AS occupancy_icon,
+           o.color AS occupancy_color, o.counts_occupied, o.do_not_disturb,
            u.full_name AS updated_by_name
       FROM rooms r
       JOIN floors f ON f.id = r.floor_id
       JOIN room_statuses s ON s.id = r.status_id
+      LEFT JOIN room_occupancies o ON o.id = r.occupancy_id
       LEFT JOIN users u ON u.id = r.updated_by
      WHERE r.active = 1`);
 

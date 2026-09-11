@@ -330,6 +330,16 @@ del hotel.
 escriben en categorías de su departamento o en categorías generales. Ama de
 Llaves no puede tocar campos de Sistemas, y viceversa.
 
+**La ocupación es un eje aparte del estado.** El estado dice en qué punto del
+ciclo de limpieza va la habitación; la **ocupación** dice si hay huésped
+dentro: *Vacante*, *Ocupada*, *Salida* o *No molestar*. Las dos cosas viajan en
+el mismo movimiento y se ven juntas en el rack, así que una habitación «En
+limpieza» ya distingue al huésped que se queda otra noche del que ya se fue.
+Registrar la entrada de un huésped saca la habitación de la venta; ninguna
+habitación ocupada puede quedar en un estado marcado con `requires_vacant`
+(*Disponible*), y liberarla la deja vacante. Limpiar e inspeccionar sí se
+registran con el huésped en casa.
+
 **Reincidencia por evento.** Un reporte que afecta varios campos genera varios
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
@@ -364,7 +374,7 @@ registra ninguna. El tope por lote es configurable (`bulk_max_rooms`).
 
 ```
 departments  roles  permissions  role_permissions  users  sessions
-floors  room_types  room_statuses  rooms          ← estado actual
+floors  room_types  room_statuses  room_occupancies  rooms   ← estado actual
 categories  fields  room_details                  ← estado actual por campo
 movement_types  movements                         ← historial inmutable
 attachments  audit_log  notifications  settings
@@ -377,7 +387,8 @@ pasado.
 
 Un movimiento registra: habitación, piso, usuario, departamento, categoría,
 tipo, acción, campo modificado, valor anterior, valor nuevo, estado anterior,
-estado nuevo, comentario, severidad, incidencia, fotografías y sello de tiempo.
+estado nuevo, ocupación anterior, ocupación nueva, comentario, severidad,
+incidencia, fotografías y sello de tiempo.
 
 ---
 

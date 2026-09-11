@@ -48,7 +48,9 @@ export const bulkResetAcciones = () => { cacheAcciones = null; };
 export async function montarBarraBloque(caja, rack, rooms, onDone) {
   const lista = await acciones();
   const estados = state.statuses ?? [];
+  const ocupaciones = state.occupancies ?? [];
   const puedeEstado = can('room.status');
+  const puedeOcupacion = can('room.occupancy');
   const tope = state.hotel?.bulkMaxRooms ?? 40;
 
   // Sólo las habitaciones activas del piso entran en un lote.
@@ -75,12 +77,15 @@ export async function montarBarraBloque(caja, rack, rooms, onDone) {
           <select name="accion" required>
             <option value="">Elija la acción a aplicar…</option>
             ${lista.map((a) => `<option value="mt:${esc(a.code)}">${esc(a.name)}${
-              // Sólo se anuncia el estado destino cuando aporta algo:
-              // "Limpieza terminada → Limpieza terminada" no dice nada.
-              a.target_status_name && a.target_status_name !== a.name
-                ? ` → ${esc(a.target_status_name)}` : ''}</option>`).join('')}
+              // Sólo se anuncia el destino cuando aporta algo: "Limpieza
+              // terminada → Limpieza terminada" no dice nada.
+              [a.target_status_name, a.target_occupancy_name]
+                .filter((d) => d && d !== a.name)
+                .map((d) => ` → ${esc(d)}`).join('')}</option>`).join('')}
             ${puedeEstado ? `<optgroup label="Cambiar estado directamente">${estados.map((s) =>
               `<option value="st:${esc(s.code)}">Marcar como ${esc(s.name)}</option>`).join('')}</optgroup>` : ''}
+            ${puedeOcupacion && ocupaciones.length ? `<optgroup label="Marcar ocupación (huésped)">${ocupaciones.map((o) =>
+              `<option value="oc:${esc(o.code)}">Marcar como ${esc(o.name)}</option>`).join('')}</optgroup>` : ''}
           </select>
         </div>
         <div class="field">
@@ -149,6 +154,7 @@ export async function montarBarraBloque(caja, rack, rooms, onDone) {
       roomIds: [...seleccion],
       movementType: valor.startsWith('mt:') ? valor.slice(3) : null,
       status: valor.startsWith('st:') ? valor.slice(3) : null,
+      occupancy: valor.startsWith('oc:') ? valor.slice(3) : null,
       comment: form.comment.value.trim() || null,
     };
     aplicar.disabled = true;

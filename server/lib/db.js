@@ -56,6 +56,39 @@ const COLUMNAS_NUEVAS = [
   },
   {
     table: 'room_statuses',
+    column: 'requires_vacant',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    // Sólo el estado de venta exige habitación sin huésped. "Inspeccionada"
+    // no: una habitación se limpia e inspecciona con el huésped en casa.
+    backfill: "UPDATE room_statuses SET requires_vacant = 1 WHERE code = 'DISPONIBLE'",
+  },
+  {
+    // El relleno de las habitaciones NO va aquí: las ocupaciones del catálogo
+    // se insertan después de migrate(), en seed/upgrade, y hasta entonces no
+    // hay ninguna fila a la que apuntar.
+    table: 'rooms',
+    column: 'occupancy_id',
+    ddl: 'INTEGER REFERENCES room_occupancies(id)',
+  },
+  {
+    table: 'rooms',
+    column: 'occupancy_changed_at',
+    ddl: 'TEXT',
+  },
+  {
+    table: 'movement_types',
+    column: 'target_occupancy_id',
+    ddl: 'INTEGER REFERENCES room_occupancies(id)',
+  },
+  // El historial es inmutable para UPDATE y DELETE; añadir columnas no lo es:
+  // los movimientos ya registrados conservan su contenido y dejan la
+  // ocupación en NULL, que es la verdad —entonces no se registraba.
+  { table: 'movements', column: 'old_occupancy_id',   ddl: 'INTEGER REFERENCES room_occupancies(id)' },
+  { table: 'movements', column: 'new_occupancy_id',   ddl: 'INTEGER REFERENCES room_occupancies(id)' },
+  { table: 'movements', column: 'old_occupancy_name', ddl: 'TEXT' },
+  { table: 'movements', column: 'new_occupancy_name', ddl: 'TEXT' },
+  {
+    table: 'room_statuses',
     column: 'attention_weight',
     ddl: 'INTEGER NOT NULL DEFAULT 3',
     backfill: `
@@ -63,6 +96,15 @@ const COLUMNAS_NUEVAS = [
       UPDATE room_statuses SET attention_weight = 4
        WHERE code IN ('BLOQUEADA', 'FUERA_SERVICIO', 'REQUIERE_ATENCION')`,
   },
+];
+
+/**
+ * Índices sobre columnas que no existen en el esquema original. No pueden
+ * declararse en schema.sql: ese archivo se ejecuta ANTES de añadir las
+ * columnas, así que sobre una base en uso fallaría con "no such column".
+ */
+const INDICES_TARDIOS = [
+  'CREATE INDEX IF NOT EXISTS ix_rooms_occupancy ON rooms(occupancy_id)',
 ];
 
 export function migrate() {
@@ -77,6 +119,7 @@ export function migrate() {
       if (c.backfill) db.exec(c.backfill);
     }
   }
+  for (const sql of INDICES_TARDIOS) db.exec(sql);
 }
 
 /**

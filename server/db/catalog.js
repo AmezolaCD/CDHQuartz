@@ -17,6 +17,7 @@ export const PERMISSIONS = [
   { code: 'room.view',        grp: 'Habitaciones', name: 'Ver habitaciones' },
   { code: 'room.edit',        grp: 'Habitaciones', name: 'Editar detalles de habitación' },
   { code: 'room.status',      grp: 'Habitaciones', name: 'Cambiar estado de habitación' },
+  { code: 'room.occupancy',   grp: 'Habitaciones', name: 'Registrar ocupación (entrada y salida de huésped)' },
   { code: 'movement.create',  grp: 'Habitaciones', name: 'Crear movimientos' },
   { code: 'history.view',     grp: 'Habitaciones', name: 'Ver historial' },
   { code: 'photo.upload',     grp: 'Habitaciones', name: 'Adjuntar fotografías' },
@@ -31,7 +32,7 @@ export const PERMISSIONS = [
   { code: 'admin.settings',   grp: 'Administración', name: 'Administrar configuraciones' },
 ];
 
-const OPERATIVO = ['room.view','room.edit','room.status','movement.create','history.view','photo.upload','report.view'];
+const OPERATIVO = ['room.view','room.edit','room.status','room.occupancy','movement.create','history.view','photo.upload','report.view'];
 
 export const ROLES = [
   { code: 'ADMIN', name: 'Administrador', department_scope: 0, is_system: 1,
@@ -60,7 +61,7 @@ export const ROLES = [
 
   { code: 'RECEPCION', name: 'Recepción', department_scope: 1, is_system: 1,
     description: 'Consulta habitaciones y registra observaciones autorizadas.',
-    permissions: ['room.view','movement.create','history.view','photo.upload','report.view'] },
+    permissions: ['room.view','room.occupancy','movement.create','history.view','photo.upload','report.view'] },
 
   { code: 'OTROS', name: 'Otros', department_scope: 1, is_system: 0,
     description: 'Consulta básica.',
@@ -72,7 +73,7 @@ export const ROLES = [
 // pendiente > inspección). Un estado nuevo con counts_attention = 1 aparece
 // en la lista sin tocar una sola línea de código.
 export const ROOM_STATUSES = [
-  { code:'DISPONIBLE',           name:'Disponible',            icon:'check-circle', color:'#16a34a', counts_ready:1 },
+  { code:'DISPONIBLE',           name:'Disponible',            icon:'check-circle', color:'#16a34a', counts_ready:1, requires_vacant:1 },
   { code:'OCUPADA',              name:'Ocupada',               icon:'user',         color:'#2563eb' },
   { code:'VACIA',                name:'Vacía',                 icon:'door',         color:'#64748b', counts_pending:1 },
   { code:'EN_LIMPIEZA',          name:'En limpieza',           icon:'spray',        color:'#0891b2', counts_cleaning:1 },
@@ -86,6 +87,23 @@ export const ROOM_STATUSES = [
   { code:'FUERA_SERVICIO',       name:'Fuera de servicio',     icon:'ban',          color:'#b91c1c', counts_blocked:1, counts_attention:1, attention_weight:4 },
   { code:'BLOQUEADA',            name:'Bloqueada',             icon:'lock',         color:'#7f1d1d', counts_blocked:1, counts_attention:1, attention_weight:4 },
   { code:'REQUIERE_ATENCION',    name:'Requiere atención',     icon:'alert',        color:'#dc2626', counts_attention:1, counts_pending:1, attention_weight:4 },
+];
+
+// La OCUPACIÓN va aparte del estado. El estado dice en qué punto del ciclo de
+// limpieza está la habitación; la ocupación, si hay huésped dentro. Ama de
+// Llaves necesita las dos cosas a la vez: una habitación sucia con el huésped
+// en casa y una sucia de salida se atienden distinto.
+export const ROOM_OCCUPANCIES = [
+  { code:'VACANTE',     name:'Vacante',     icon:'door',   color:'#64748b', is_default:1,
+    description:'Sin huésped. Puede venderse en cuanto su estado lo permita.' },
+  { code:'OCUPADA',     name:'Ocupada',     icon:'user',   color:'#2563eb', counts_occupied:1,
+    target_status:'OCUPADA',
+    description:'Hay huésped en casa. La habitación no puede quedar a la venta.' },
+  { code:'SALIDA',      name:'Salida',      icon:'logout', color:'#d97706',
+    description:'El huésped ya se fue; la habitación espera limpieza de salida.' },
+  { code:'NO_MOLESTAR', name:'No molestar', icon:'ban',    color:'#7c3aed', counts_occupied:1, do_not_disturb:1,
+    target_status:'OCUPADA',
+    description:'Hay huésped y pidió no ser molestado: no se entra a la habitación.' },
 ];
 
 const EST_MTTO   = ['OK','Requiere revisión','Falla','Fuera de servicio'];
@@ -146,8 +164,13 @@ export const MOVEMENT_TYPES = [
   { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, sort_order:13 },
   { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, sort_order:14 },
   { code:'OUT_OF_SERVICE', name:'Marcar fuera de servicio', category:'MTTO', target_status:'FUERA_SERVICIO',  icon:'ban',          is_quick_action:0, is_incident:1, severity:'critica', requires_comment:1, notify:1, sort_order:15 },
-  { code:'STATUS_CHANGE', name:'Cambio de estado',      category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:16 },
-  { code:'DETAIL_UPDATE', name:'Actualización de detalle', category:null,target_status:null,                  icon:'edit',         is_quick_action:0, is_system:1, sort_order:17 },
+  { code:'CHECK_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:null,  target_occupancy:'OCUPADA',     icon:'user',   is_quick_action:1, sort_order:16 },
+  { code:'CHECK_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:null,  target_occupancy:'SALIDA',      icon:'logout', is_quick_action:1, sort_order:17 },
+  { code:'DND_ON',      name:'Marcar no molestar',      category:'OTROS',target_status:null,  target_occupancy:'NO_MOLESTAR', icon:'ban',    is_quick_action:1, sort_order:18 },
+  { code:'DND_OFF',     name:'Quitar no molestar',      category:'OTROS',target_status:null,  target_occupancy:'OCUPADA',     icon:'user',   is_quick_action:1, sort_order:19 },
+  { code:'STATUS_CHANGE', name:'Cambio de estado',      category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:20 },
+  { code:'DETAIL_UPDATE', name:'Actualización de detalle', category:null,target_status:null,                  icon:'edit',         is_quick_action:0, is_system:1, sort_order:21 },
+  { code:'OCCUPANCY_CHANGE', name:'Cambio de ocupación', category:null,  target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:22 },
 ];
 
 export const ROOM_TYPES = [
