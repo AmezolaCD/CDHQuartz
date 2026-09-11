@@ -101,9 +101,16 @@ cp .env.example .env          # defina CDH_SEED_PASSWORD
 docker compose up -d --build  # http://127.0.0.1:3000
 ```
 
-La imagen parte de `node:22-alpine`. `better-sqlite3` incluye binarios
-precompilados para musl, así que no hace falta cadena de compilación: la
-imagen final no lleva gcc, python ni node-gyp.
+La imagen parte de `node:22-alpine`. `better-sqlite3` publica sus binarios
+dentro del propio paquete, uno por plataforma, así que no hace falta cadena de
+compilación: la imagen final no lleva gcc, python ni node-gyp.
+
+Eso sí, el paquete publica también su `binding.gyp`, y con eso npm lanza
+`node-gyp rebuild` por su cuenta aunque el binario ya esté ahí. Por eso la
+instalación va con `--ignore-scripts`: sin esa bandera la construcción falla en
+Alpine pidiendo Python. Ninguna dependencia del proyecto declara un script de
+instalación propio, así que no se pierde nada. El CI construye la imagen y la
+arranca en cada cambio, para que esto no vuelva a descubrirse en el hotel.
 
 | Aspecto | Cómo queda resuelto |
 |---|---|

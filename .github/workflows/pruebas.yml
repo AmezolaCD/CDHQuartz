@@ -151,3 +151,61 @@ jobs:
           $up = npm run upgrade --silent | Out-String
           Write-Host $up
           if ($up -notmatch '\[upgrade\]') { throw "upgrade.js no imprimió nada: no llegó a ejecutarse" }
+
+  imagen:
+    name: Imagen Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Los dos composes deben resolverse
+        env:
+          CDH_SEED_PASSWORD: Imagen#Prueba2026
+          CDH_DOMAIN: cdh.ejemplo.com
+        run: |
+          docker compose config > /dev/null
+          docker compose -f docker-compose.yml -f docker-compose.caddy.yml config > /dev/null
+
+      - name: Construir la imagen
+        # Este paso es el que faltaba: el Dockerfile llegó a producción sin
+        # haberse construido nunca, y npm compilaba better-sqlite3 en Alpine
+        # por la presencia de binding.gyp, sin compilador en la imagen.
+        run: docker build -t cdh-quartz:ci .
+
+      - name: La imagen debe arrancar y sembrar el hotel
+        run: |
+          set -euo pipefail
+          docker run -d --name cdh-ci -p 3300:3000 \
+            -e CDH_SEED_PASSWORD='Imagen#Prueba2026' \
+            -e CDH_TZ='America/Tijuana' \
+            cdh-quartz:ci
+
+          for _ in $(seq 1 40); do
+            if curl -sf http://localhost:3300/api/health > /dev/null; then break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' cdh-ci)" != "true" ]; then
+              echo "::error::El contenedor terminó durante el arranque."
+              docker logs cdh-ci; exit 1
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:3300/api/health > /dev/null \
+            || { echo "::error::La imagen no respondió a /api/health."; docker logs cdh-ci; exit 1; }
+
+          # Si el binario nativo no cargara desde prebuilds/, esto lo delata.
+          HABITACIONES=$(docker exec cdh-ci node -e "
+            const D = require('better-sqlite3');
+            const db = new D(process.env.CDH_DATA_DIR + '/cdh.sqlite', { readonly: true });
+            process.stdout.write(String(db.prepare('SELECT COUNT(*) n FROM rooms').get().n));
+          ")
+          echo "Habitaciones sembradas en la imagen: $HABITACIONES"
+          if [ "$HABITACIONES" != "155" ]; then
+            echo "::error::Se esperaban 155 habitaciones y hay $HABITACIONES."
+            docker logs cdh-ci; exit 1
+          fi
+
+          # El respaldo en caliente también vive dentro de la imagen.
+          docker exec cdh-ci npm run backup --silent
+
+          docker rm -f cdh-ci
+          echo "Imagen correcta: arranca, siembra 155 habitaciones y respalda."
