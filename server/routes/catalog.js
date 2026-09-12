@@ -48,7 +48,6 @@ router.get('/bootstrap', requireAuth, asyncRoute((req, res) => {
         FROM floors f LEFT JOIN rooms r ON r.floor_id = f.id
        WHERE f.active = 1 GROUP BY f.id ORDER BY f.sort_order`),
     statuses: all('SELECT * FROM room_statuses WHERE active = 1 ORDER BY sort_order'),
-    occupancies: all('SELECT * FROM room_occupancies WHERE active = 1 ORDER BY sort_order'),
     departments: all('SELECT * FROM departments WHERE active = 1 ORDER BY sort_order'),
     categories: all(`
       SELECT c.*, d.name AS department_name FROM categories c

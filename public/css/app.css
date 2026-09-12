@@ -106,38 +106,28 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 /* ------------------------------------------------- cuadrícula del rack */
 .rack{overflow-x:auto;padding:14px 16px 18px}
 .rack-grid{display:grid;gap:8px;min-width:min-content}
-.rack-empty{border:1px dashed var(--line);border-radius:var(--r);background:repeating-linear-gradient(135deg,transparent,transparent 5px,var(--surface-2) 5px,var(--surface-2) 10px);min-height:96px}
+.rack-empty{border:1px dashed var(--line);border-radius:var(--r);background:repeating-linear-gradient(135deg,transparent,transparent 5px,var(--surface-2) 5px,var(--surface-2) 10px);min-height:92px}
 
-.room{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:104px;min-height:96px;
+.room{position:relative;display:flex;flex-direction:column;justify-content:space-between;gap:4px;min-width:104px;min-height:92px;
   padding:9px 10px;border:1px solid var(--line);border-left:4px solid var(--st,var(--ink-4));border-radius:var(--r);
   background:var(--surface);box-shadow:var(--sh-1);text-align:left;transition:transform .1s,box-shadow .12s,border-color .12s}
 .room:hover{transform:translateY(-2px);box-shadow:var(--sh-2)}
 .room:focus-visible{outline:2px solid var(--plum-500);outline-offset:2px}
 .room .num{font-size:17px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.room .st{display:flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--st);line-height:1.25}
-.room .st span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* El nombre del estado se parte en dos líneas antes que recortarse: cortados,
+   "Ocupado limpio" y "Ocupado sucio" se leen igual. */
+/* No es una fila flex: en una, la segunda línea arrancaría después del icono
+   y el nombre se partiría a media palabra. Así el texto usa el ancho entero
+   de la tarjeta al bajar de renglón. */
+.room .st{display:block;font-size:10.5px;font-weight:600;color:var(--st);line-height:1.25;
+  overflow-wrap:break-word}
+.room .st svg{display:inline;vertical-align:-2px;margin-right:3px}
 .room .flags{display:flex;gap:4px;align-items:center;min-height:16px}
 .room.inactive{opacity:.5;background:var(--surface-2)}
 .flag{display:inline-flex;align-items:center;gap:2px;padding:1px 5px;border-radius:5px;font-size:10px;font-weight:700;line-height:1.5}
 .flag.inc{background:var(--danger-bg);color:var(--danger)}
 .flag.rec{background:var(--warn-bg);color:var(--warn)}
 .flag.att{background:var(--info-bg);color:var(--info)}
-/* Ocupación: renglón propio, no un distintivo más. Se dibuja siempre, también
-   cuando no hay huésped —"no dice nada" y "no hay nadie" no pueden verse
-   igual— y el nombre se parte en dos líneas antes que recortarse: "Huésped
-   ahí" y "Huésped ausente" se distinguen por la última palabra. */
-.room .occ{display:flex;align-items:flex-start;gap:4px;font-size:10px;font-weight:700;
-  color:var(--oc);line-height:1.25;overflow-wrap:anywhere;
-  background:color-mix(in srgb,var(--oc) 11%,transparent);
-  border:1px solid color-mix(in srgb,var(--oc) 30%,transparent);
-  border-radius:5px;padding:2px 5px;margin-top:1px}
-.room .occ svg{flex:none;margin-top:1px}
-@supports not (color:color-mix(in srgb,red 10%,transparent)){
-  .room .occ{background:var(--surface-2);border-color:var(--line)}
-}
-/* Con huésped dentro, el canto derecho lo dice sin tener que leer. */
-.room[data-occupied="1"]{border-right:4px solid var(--oc)}
-
 /* ------------------------------------------------- selección en bloque */
 /* En modo bloque el rack deja de abrir expedientes y pasa a seleccionar:
    el cursor, la casilla y el marco lo dicen antes del primer toque. */
@@ -148,6 +138,13 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .bulk-on .room.selected::after{background:var(--plum-600);border-color:var(--plum-600);
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E");
   background-size:12px;background-position:center;background-repeat:no-repeat}
+
+/* Opciones de una pregunta del formulario (¿estará el huésped?). */
+.opciones{display:flex;flex-wrap:wrap;gap:8px}
+.opciones label{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line);
+  border-radius:var(--r);background:var(--surface);font-size:13px;cursor:pointer}
+.opciones label:has(input:checked){border-color:var(--plum-500);background:var(--plum-100);color:var(--plum-700);font-weight:650}
+.opciones input{accent-color:var(--plum-600);margin:0}
 
 .hint-block{display:flex;align-items:flex-start;gap:7px;border:1px solid #fde68a;background:var(--warn-bg);
   color:var(--ink);border-radius:var(--r);padding:9px 11px;margin-bottom:14px;font-size:12.5px;line-height:1.45}
@@ -392,7 +389,7 @@ tbody tr:hover{background:var(--surface-2)}
 /* Tablet: objetivos táctiles más grandes */
 @media (pointer:coarse){
   .btn,input,select,textarea{min-height:46px}
-  .room{min-height:104px;min-width:110px}
+  .room{min-height:100px;min-width:110px}
   .quick button{min-height:84px}
   .list-item{padding:14px 16px}
 }

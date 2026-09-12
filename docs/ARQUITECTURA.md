@@ -87,47 +87,54 @@ leen la misma bandera: no pueden contradecirse. Antes la lista nombraba tres
 códigos de estado a mano, así que un reporte a Sistemas sumaba en el contador
 y nunca aparecía en la lista.
 
-## Ocupación: el segundo eje
+## Los estados son los del PMS
 
-El estado responde «¿en qué punto del ciclo de limpieza va?». La ocupación
-responde «¿hay huésped dentro?». Son preguntas independientes y por eso viven
-en catálogos distintos (`room_statuses` y `room_occupancies`): multiplicar
-estados —limpia-ocupada, limpia-vacante, sucia-ocupada…— haría ilegible el
-catálogo y obligaría a tocar código cada vez que el hotel añadiera un matiz.
+El hotel opera con Arpón. Su pantalla de Ama de Llaves maneja *Disponible
+limpio*, *Ocupado sucio*, *Ocupado limpio*, *Salida* y *Entrada nueva*; el CDH
+usa esos mismos, con sus mismos nombres, más *Discrepancia* y *Fuera de
+servicio*, que Arpón no muestra ahí y la operación necesita. Dos pantallas que
+dicen lo mismo no se contradicen, y el día que se enlacen los dos sistemas no
+hará falta una tabla de traducción.
 
-Las banderas del catálogo de ocupación son:
+`clean_status_id` es el único añadido de forma: dice a dónde pasa cada estado
+cuando se termina de limpiarlo. Una habitación *Ocupado sucio* queda *Ocupado
+limpio*; una de *Salida* queda *Disponible limpio*. La acción «Limpieza
+terminada» no apunta a un estado fijo —se marca con `target_from_clean`— porque
+un destino único sería falso en la mitad de los casos.
 
-| Bandera | Qué significa |
-|---|---|
-| `counts_occupied` | Hay huésped dentro (*Ocupada*, *No molestar*) |
-| `do_not_disturb` | No se entra a la habitación |
-| `is_default` | Es la ocupación «sin huésped»; a ella vuelve la habitación al ponerse a la venta |
-| `target_status_id` | Estado al que pasa una habitación a la venta cuando entra un huésped |
+## El huésped: un dato del reporte
 
-Del lado del estado, `requires_vacant` marca el estado de **venta**
-(*Disponible*). Con eso, las dos reglas que impiden la contradicción viven en
-la única puerta de escritura —valen igual para la acción rápida, el cambio
-manual y el cambio en bloque—:
+Hubo un momento en que la ocupación fue un segundo eje de la habitación. Dejó
+de hacer falta: los estados del PMS ya dicen si hay huésped. Lo que sí hacía
+falta, y ningún estado respondía, es **si el huésped estará dentro cuando suba
+Mantenimiento o Sistemas**.
 
-1. Una habitación con `counts_occupied` **no puede** pasar a un estado
-   `requires_vacant`: primero se registra la salida del huésped.
-2. Registrar una ocupación con huésped sobre una habitación que sí estaba a la
-   venta la saca de la venta en el mismo movimiento, al estado que nombra
-   `target_status_id`. No exige el permiso `room.status`: lo decide el sistema
-   al detectar la contradicción, y dejarla vendible sería lo inseguro. Es el
-   mismo patrón con que una falla retira la habitación del servicio.
+Eso es `movements.guest_present` (`si` | `no` | `desconocido`): un dato del
+movimiento, no de la habitación. Los tipos de movimiento marcados con
+`asks_guest_present` lo exigen, viaja con la notificación al área destino y
+queda en el historial. Es información de un instante —la del momento en que se
+levantó el reporte— y guardarla como estado permanente la habría hecho mentir
+al día siguiente.
 
-El camino inverso también se cierra: poner una habitación a la venta la deja
-vacante, porque quien la libera ya afirmó que no hay nadie dentro —y el caso
-contrario acaba de rechazarse por la regla 1.
+Por eso esas acciones no aparecen en el cambio en bloque: la respuesta es de
+una habitación concreta, igual que una fotografía.
 
-Limpiar e inspeccionar **no** están restringidos: una habitación de estancia se
-limpia e inspecciona con el huésped en casa; lo único que no puede es volver a
-venderse.
+La tabla `room_occupancies` sigue en el esquema, vacía de filas activas. No se
+elimina porque los movimientos ya registrados apuntan a ella y el historial es
+inmutable.
 
-Registrar la ocupación exige el permiso `room.occupancy`, separado de
-`room.status`: Recepción registra entradas y salidas sin poder mover el ciclo
-de limpieza.
+## Los reportes y la venta
+
+Un reporte **no mueve el estado**: el estado lo lleva Ama de Llaves y refleja el
+ciclo del PMS. Lo que impide vender una habitación es la incidencia abierta, no
+un estado especial.
+
+Con una excepción necesaria: si la habitación estaba en un estado de venta
+(`counts_ready`) cuando se levanta el reporte de un área que bloquea, sale de la
+venta en ese mismo movimiento, al `pending_status_id` de la categoría (*Fuera de
+servicio*). Sin ella, el guardián vigilaría la puerta sin expulsar a quien ya
+estaba dentro: una habitación ya disponible se quedaría a la venta con el
+reporte abierto. Es el mismo patrón con que un campo en falla la retira.
 
 ## Incidencias
 

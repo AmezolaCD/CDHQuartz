@@ -6,7 +6,7 @@ import {
   ROOM_SQL, getRoom, recordMovement, recordBulkMovement, MovementError,
   getFieldMap, isIncidentValue, canWriteCategory,
 } from '../lib/movements.js';
-import { openIncidentsByRoom, occupancyBreakdown, recurrence, thresholds } from '../lib/stats.js';
+import { openIncidentsByRoom, recurrence, thresholds } from '../lib/stats.js';
 import { getSettingNumber } from '../lib/settings.js';
 
 const router = express.Router();
@@ -64,10 +64,6 @@ router.get('/floors/:id/map', asyncRoute((req, res) => {
       JOIN rooms r ON r.status_id = s.id AND r.floor_id = @id AND r.active = 1
      GROUP BY s.id ORDER BY s.sort_order`, { id: floor.id });
 
-  // Sólo se anuncian las ocupaciones con habitaciones en el piso: una con cero
-  // no le dice nada a quien está haciendo la ronda.
-  const occupancySummary = occupancyBreakdown(floor.id).filter((o) => o.rooms > 0);
-
   res.json({
     floor,
     columns: maxCol,
@@ -77,10 +73,8 @@ router.get('/floors/:id/map', asyncRoute((req, res) => {
       rooms: rooms.filter((r) => r.active).length,
       inactive: rooms.filter((r) => !r.active).length,
       attention: rooms.filter((r) => r.needsAttention).length,
-      occupied: rooms.filter((r) => r.active && r.counts_occupied).length,
     },
     statusSummary,
-    occupancySummary,
   });
 }));
 
@@ -206,7 +200,6 @@ router.get('/:id', asyncRoute((req, res) => {
     recurrence: { window, incidents: recentIncidents, thresholds: thresholds() },
     movementCount: one('SELECT COUNT(*) AS n FROM movements WHERE room_id = @id', { id: room.id }).n,
     canEditStatus: req.user.permissions.includes('room.status'),
-    canEditOccupancy: req.user.permissions.includes('room.occupancy'),
     canCreateMovement: req.user.permissions.includes('movement.create'),
   });
 }));
@@ -262,9 +255,9 @@ router.post('/bulk/movements', requirePermission('movement.create'), asyncRoute(
     req,
     movementTypeCode: req.body.movementType || null,
     statusCode: req.body.status || null,
-    occupancyCode: req.body.occupancy || null,
     details: Array.isArray(req.body.details) ? req.body.details : [],
     comment: req.body.comment ?? null,
+    guestPresent: req.body.guestPresent ?? null,
   });
   res.status(201).json(result);
 }));
@@ -294,9 +287,9 @@ router.post('/:id/movements',
         req,
         movementTypeCode: req.body.movementType || null,
         statusCode: req.body.status || null,
-        occupancyCode: req.body.occupancy || null,
         details: Array.isArray(details) ? details : [],
         comment: req.body.comment ?? null,
+        guestPresent: req.body.guestPresent ?? null,
         photos: toPhotoRecords(files, kinds),
         correctsMovementId: int(req.body.correctsMovementId),
       });
@@ -315,21 +308,24 @@ router.get('/meta/quick-actions', asyncRoute((req, res) => {
            mt.allows_photo, mt.is_incident, mt.is_quick_action, mt.cross_department, mt.sort_order,
            c.id AS category_id, c.code AS category_code, c.name AS category_name,
            c.department_id AS category_department_id,
-           s.code AS target_status_code, s.name AS target_status_name,
-           o.code AS target_occupancy_code, o.name AS target_occupancy_name,
-           o.icon AS target_occupancy_icon, o.color AS target_occupancy_color
+           mt.target_from_clean, mt.asks_guest_present,
+           s.code AS target_status_code, s.name AS target_status_name
       FROM movement_types mt
       LEFT JOIN categories c ON c.id = mt.category_id
       LEFT JOIN room_statuses s ON s.id = mt.target_status_id
-      LEFT JOIN room_occupancies o ON o.id = mt.target_occupancy_id
      WHERE mt.active = 1 AND mt.is_system = 0
      ORDER BY mt.sort_order`);
   res.json({
     actions: rows
       .filter((a) => a.cross_department || canWriteCategory(req.user, a.category_department_id))
-      .filter((a) => !a.target_status_code || req.user.permissions.includes('room.status'))
-      .filter((a) => !a.target_occupancy_code || req.user.permissions.includes('room.occupancy'))
-      .map((a) => ({ ...a, requiresComment: !!a.requires_comment, requiresPhoto: !!a.requires_photo })),
+      .filter((a) => !(a.target_status_code || a.target_from_clean)
+        || req.user.permissions.includes('room.status'))
+      .map((a) => ({
+        ...a,
+        requiresComment: !!a.requires_comment,
+        requiresPhoto: !!a.requires_photo,
+        asksGuestPresent: !!a.asks_guest_present,
+      })),
   });
 }));
 

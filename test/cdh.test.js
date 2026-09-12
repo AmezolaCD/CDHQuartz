@@ -70,6 +70,7 @@ describe('Distribución de habitaciones', () => {
 describe('Registro transaccional', () => {
   test('un movimiento actualiza estado, historial y auditoría a la vez', () => {
     const room = getRoomByNumber('701');
+    recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
     const before = one('SELECT COUNT(*) n FROM audit_log').n;
     const res = recordMovement({
       roomId: room.id, user: user('supervisor'), movementTypeCode: 'CLEAN_DONE',
@@ -77,7 +78,7 @@ describe('Registro transaccional', () => {
       comment: 'Limpieza verificada.',
     });
     assert.equal(res.movementIds.length, 2);          // acción + campo
-    assert.equal(res.room.status_code, 'LIMPIEZA_TERMINADA');
+    assert.equal(res.room.status_code, 'DISPONIBLE_LIMPIO');
     assert.equal(one('SELECT COUNT(*) n FROM audit_log').n, before + 1);
     const detail = one(`SELECT value FROM room_details
       WHERE room_id = @r AND field_id = (SELECT id FROM fields WHERE code='limpieza')`, { r: room.id });
@@ -101,7 +102,7 @@ describe('Registro transaccional', () => {
     const movesBefore = one('SELECT COUNT(*) n FROM movements').n;
     const statusBefore = room.status_code;
     assert.throws(() => recordMovement({
-      roomId: room.id, user: user('supervisor'), movementTypeCode: 'BLOCK',
+      roomId: room.id, user: user('supervisor'), movementTypeCode: 'OUT_OF_SERVICE',
       comment: 'Prueba de reversión.',
       photos: [{ filename: null }],   // viola NOT NULL después de insertar el movimiento
     }));
@@ -120,7 +121,7 @@ describe('Registro transaccional', () => {
   test('las acciones que exigen comentario lo exigen de verdad', () => {
     const room = getRoomByNumber('705');
     assert.throws(
-      () => recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'DAMAGE' }),
+      () => recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'DAMAGE', guestPresent: 'no' }),
       (e) => /requiere un comentario/.test(e.message));
   });
 });
@@ -181,13 +182,18 @@ describe('Permisos y alcance por departamento', () => {
       (e) => e.status === 403);
   });
 
-  test('Recepción registra observaciones generales pero no cambia el estado', () => {
+  test('Recepción registra la entrada y la salida, pero no campos de otra área', () => {
     const room = getRoomByNumber('711');
     const res = recordMovement({ roomId: room.id, user: user('recepcion'),
       movementTypeCode: 'NOTE', comment: 'El huésped reporta ruido en el pasillo.' });
     assert.equal(res.movementIds.length, 1);
+    // Mueve el estado del huésped, que es su trabajo…
+    const entrada = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'GUEST_IN' });
+    assert.equal(entrada.room.status_code, 'OCUPADO_LIMPIO');
+    // …pero no escribe en los campos de Sistemas.
     assert.throws(
-      () => recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'BLOCK', comment: 'x' }),
+      () => recordMovement({ roomId: room.id, user: user('recepcion'),
+        details: [{ fieldCode: 'wifi', value: 'Sin servicio' }] }),
       (e) => e.status === 403);
   });
 });
@@ -213,12 +219,12 @@ describe('Incidencias y reincidencia', () => {
     const room = getRoomByNumber('713');
     // Un solo reporte que toca dos campos = una incidencia, no tres.
     recordMovement({ roomId: room.id, user: user('mantenimiento'), movementTypeCode: 'MAINT_REPORT',
-      comment: 'Falla eléctrica y de clima.',
+      comment: 'Falla eléctrica y de clima.', guestPresent: 'no',
       details: [{ fieldCode: 'electricidad', value: 'Falla' }, { fieldCode: 'hvac', value: 'Falla' }] });
     assert.equal(stats.recurrence({ minCount: 2 }).rooms.find((r) => r.room_id === room.id), undefined);
 
     recordMovement({ roomId: room.id, user: user('mantenimiento'), movementTypeCode: 'MAINT_REPORT',
-      comment: 'Segundo reporte: la falla eléctrica reaparece.' });
+      comment: 'Segundo reporte: la falla eléctrica reaparece.', guestPresent: 'no' });
     const rec = stats.recurrence({ minCount: 2 }).rooms.find((r) => r.room_id === room.id);
     assert.ok(rec, 'la habitación debe aparecer como reincidente tras dos eventos');
     assert.equal(rec.incidents, 2);
@@ -254,12 +260,14 @@ describe('Indicadores y atención', () => {
     const room = getRoomByNumber('808');
     recordMovement({
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
-      comment: 'Televisión sin señal.',
+      comment: 'Televisión sin señal.', guestPresent: 'no', guestPresent: 'no',
     });
     const att = stats.attention({ limit: 400 });
     const fila = att.items.find((i) => i.number === '808');
     assert.ok(fila, 'la habitación reportada a Sistemas debe aparecer en "Requiere atención"');
-    assert.ok(fila.reasons.some((r) => r.label === 'Sistemas pendiente'));
+    // El reporte ya no mueve el estado: lo que la pone en la lista es la
+    // incidencia abierta, y el motivo tiene que decirlo.
+    assert.ok(fila.reasons.some((r) => r.code === 'incidencia'));
 
     const marcadas = all(`
       SELECT r.number FROM rooms r JOIN room_statuses s ON s.id = r.status_id
@@ -270,11 +278,10 @@ describe('Indicadores y atención', () => {
     }
   });
 
-  test('el orden pone primero el bloqueo y al final la inspección', () => {
-    const bloqueo = one("SELECT attention_weight w FROM room_statuses WHERE code = 'BLOQUEADA'").w;
-    const sistemas = one("SELECT attention_weight w FROM room_statuses WHERE code = 'SIS_PENDIENTE'").w;
-    const inspeccion = one("SELECT attention_weight w FROM room_statuses WHERE code = 'INSPECCION_PENDIENTE'").w;
-    assert.ok(bloqueo > sistemas && sistemas > inspeccion);
+  test('el bloqueo pesa más que cualquier otro motivo', () => {
+    const peso = (code) => one('SELECT attention_weight w FROM room_statuses WHERE code = @code', { code }).w;
+    assert.ok(peso('FUERA_SERVICIO') >= peso('DISCREPANCIA'));
+    assert.ok(peso('FUERA_SERVICIO') > peso('OCUPADO_SUCIO'));
   });
 
   test('cada movimiento responde qué, quién, cuándo, dónde y por qué', () => {
@@ -314,112 +321,99 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
 
   test('no sobrescribe lo que un administrador configuró', () => {
     const { upgrade } = upgradeMod;
-    db.prepare("UPDATE room_statuses SET name = 'Lista para vender' WHERE code = 'DISPONIBLE'").run();
+    db.prepare("UPDATE room_statuses SET name = 'Lista para vender' WHERE code = 'DISPONIBLE_LIMPIO'").run();
     db.prepare("UPDATE settings SET value = '45' WHERE key = 'recurrence_window_days'").run();
 
     upgrade({ quiet: true });
 
-    assert.equal(one("SELECT name FROM room_statuses WHERE code = 'DISPONIBLE'").name, 'Lista para vender');
+    assert.equal(one("SELECT name FROM room_statuses WHERE code = 'DISPONIBLE_LIMPIO'").name, 'Lista para vender');
     assert.equal(one("SELECT value FROM settings WHERE key = 'recurrence_window_days'").value, '45');
   });
 
-  test('una base anterior a la ocupación queda al día sin tocar estados', () => {
+  test('una base con los estados viejos pasa a los de Arpón sin perder ninguna habitación', () => {
     const { upgrade } = upgradeMod;
-    // Se simula la base del hotel antes de esta versión: el permiso todavía no
-    // existe y ninguna habitación tiene ocupación asignada. El catálogo de
-    // ocupación no se borra porque el historial ya registrado lo referencia, y
-    // el historial es inmutable: eso es justo lo que debe pasar.
-    db.prepare("UPDATE rooms SET status_id = (SELECT id FROM room_statuses WHERE code='OCUPADA') WHERE number = '303'").run();
-    db.prepare('UPDATE rooms SET occupancy_id = NULL, occupancy_changed_at = NULL').run();
-    db.prepare("DELETE FROM permissions WHERE code = 'room.occupancy'").run();
+    // Se recrea la base anterior: los estados propios del CDH, activos, con
+    // habitaciones dentro y el permiso de ocupación todavía asignado.
+    const viejo = (code, name, extra = '') => {
+      if (!one('SELECT 1 x FROM room_statuses WHERE code = @code', { code })) {
+        db.prepare(`INSERT INTO room_statuses (code, name, icon, color, sort_order, is_system, active${extra ? ', ' + extra : ''})
+                    VALUES (@code, @name, 'circle', '#64748b', 99, 1, 1${extra ? ', 1' : ''})`).run({ code, name });
+      }
+      db.prepare('UPDATE room_statuses SET name = @name, active = 1 WHERE code = @code').run({ code, name });
+      return one('SELECT id FROM room_statuses WHERE code = @code', { code }).id;
+    };
+    const disponible = viejo('DISPONIBLE', 'Disponible');
+    const enLimpieza = viejo('EN_LIMPIEZA', 'En limpieza');
+    const mantPendiente = viejo('MANT_PENDIENTE', 'Mantenimiento pendiente');
+    // Una base nueva ya no siembra la ocupación; se recrea la fila que la
+    // base anterior sí tenía, que es el dato en el que se apoya la mudanza.
+    if (!one("SELECT 1 x FROM room_occupancies WHERE code = 'OCUPADA'")) {
+      db.prepare(`INSERT INTO room_occupancies (code, name, icon, color, counts_occupied, sort_order, is_system, active)
+                  VALUES ('OCUPADA', 'Huésped ahí', 'user', '#2563eb', 1, 2, 1, 1)`).run();
+    }
+    const ocupada = one("SELECT id FROM room_occupancies WHERE code = 'OCUPADA'").id;
+
+    const mover = (numero, estado, conHuesped = false) => {
+      const id = getRoomByNumber(numero).id;
+      db.prepare('UPDATE rooms SET status_id = @s, occupancy_id = @o WHERE id = @id')
+        .run({ s: estado, o: conHuesped ? ocupada : null, id });
+      return id;
+    };
+    mover('303', disponible);
+    mover('304', enLimpieza);                 // sin huésped: era de salida
+    mover('305', enLimpieza, true);           // con huésped: se queda otra noche
+    mover('306', mantPendiente);
 
     const acciones = upgrade({ quiet: true });
-    assert.ok(acciones.some((a) => a.grupo === 'Ocupación sembrada'), 'rellena las habitaciones vivas');
+    assert.ok(acciones.some((a) => a.grupo === 'Habitaciones al catálogo de Arpón'));
 
-    assert.equal(one('SELECT COUNT(*) n FROM rooms WHERE occupancy_id IS NULL').n, 0,
-      'ninguna habitación se queda sin ocupación');
-    assert.equal(getRoomByNumber('303').occupancy_code, 'OCUPADA',
-      'la que tenía el estado "Ocupada" arranca con huésped');
-    assert.equal(getRoomByNumber('304').occupancy_code, 'VACANTE');
-    assert.equal(getRoomByNumber('303').status_code, 'OCUPADA', 'el estado no se toca');
+    assert.equal(getRoomByNumber('303').status_code, 'DISPONIBLE_LIMPIO');
+    assert.equal(getRoomByNumber('304').status_code, 'SALIDA');
+    assert.equal(getRoomByNumber('305').status_code, 'OCUPADO_SUCIO',
+      'la ocupación que el CDH venía registrando distingue estos dos casos');
+    assert.equal(getRoomByNumber('306').status_code, 'FUERA_SERVICIO',
+      'con trabajo pendiente no puede acabar vendible');
 
-    // El permiso nuevo tiene que llegar a los roles del sistema que lo usan:
-    // hasta ahora no existía, así que nadie pudo habérselo quitado.
-    const tienePermiso = (rol) => one(`
-      SELECT 1 x FROM role_permissions rp
-        JOIN roles r ON r.id = rp.role_id
-        JOIN permissions p ON p.id = rp.permission_id
-       WHERE r.code = @rol AND p.code = 'room.occupancy'`, { rol });
-    for (const rol of ['AMA', 'RECEPCION', 'SUPERVISOR', 'ADMIN']) {
-      assert.ok(tienePermiso(rol), `el rol ${rol} debe recibir room.occupancy`);
+    // Vaciados los estados viejos, se retiran; y el permiso desaparece.
+    for (const code of ['DISPONIBLE', 'EN_LIMPIEZA', 'MANT_PENDIENTE']) {
+      assert.equal(one('SELECT active FROM room_statuses WHERE code = @code', { code }).active, 0,
+        `${code} debe quedar retirado`);
     }
-    // Gerencia sólo consulta: el catálogo no le asigna el permiso.
-    assert.equal(tienePermiso('GERENCIA'), undefined);
+    assert.equal(one("SELECT 1 x FROM permissions WHERE code = 'room.occupancy'"), undefined);
+    assert.equal(one('SELECT COUNT(*) n FROM rooms').n, 155, 'ninguna habitación se pierde');
+
+    // La mudanza queda en la bitácora, habitación por habitación.
+    const registro = one(`SELECT after_json FROM audit_log WHERE entity_id = 'estados-arpon'
+                           ORDER BY id DESC LIMIT 1`);
+    assert.ok(registro, 'la bitácora debe conservar la mudanza');
+    const detalle = JSON.parse(registro.after_json).habitaciones;
+    assert.ok(detalle.some((h) => h.habitacion === '305' && h.a === 'Ocupado sucio'));
 
     assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
   });
 
-  test('mejora el nombre de una ocupación, pero no el que el hotel eligió', () => {
+  test('no retira un estado que el hotel dejó en uso', () => {
     const { upgrade } = upgradeMod;
-    const nombre = () => one("SELECT name FROM room_occupancies WHERE code = 'VACANTE'").name;
-
-    // Una base que todavía trae el nombre publicado se pone al día.
-    db.prepare("UPDATE room_occupancies SET name = 'Vacante' WHERE code = 'VACANTE'").run();
-    const acciones = upgrade({ quiet: true });
-    assert.ok(acciones.some((a) => a.grupo === 'Nombre más claro'));
-    assert.equal(nombre(), 'Huésped ausente');
-    assert.equal(upgrade({ quiet: true }).length, 0, 'la condición se agota sola');
-
-    // Una que el hotel renombró se queda como está: la decisión es suya.
-    db.prepare("UPDATE room_occupancies SET name = 'Sin nadie' WHERE code = 'VACANTE'").run();
-    upgrade({ quiet: true });
-    assert.equal(nombre(), 'Sin nadie');
-    db.prepare("UPDATE room_occupancies SET name = 'Huésped ausente' WHERE code = 'VACANTE'").run();
-  });
-
-  test('retira "Vacía" del catálogo, pero no si alguna habitación está en él', () => {
-    const { upgrade } = upgradeMod;
-    const vacia = () => one("SELECT id, name, active FROM room_statuses WHERE code = 'VACIA'");
-
-    // Una base nueva ya no lo trae; se recrea el estado tal como lo tiene una
-    // base anterior —activo y sin usar— para recorrer la baja de verdad.
-    if (!vacia()) {
-      db.prepare(`INSERT INTO room_statuses (code, name, icon, color, counts_pending, sort_order, is_system, active)
-                  VALUES ('VACIA', 'Vacía', 'door', '#64748b', 1, 3, 1, 1)`).run();
+    const id = () => one("SELECT id, active FROM room_statuses WHERE code = 'BLOQUEADA'");
+    if (!id()) {
+      db.prepare(`INSERT INTO room_statuses (code, name, icon, color, sort_order, is_system, active)
+                  VALUES ('BLOQUEADA', 'Bloqueada', 'lock', '#7f1d1d', 99, 1, 1)`).run();
     }
-    db.prepare("UPDATE room_statuses SET name = 'Vacía', active = 1 WHERE code = 'VACIA'").run();
-    const acciones = upgrade({ quiet: true });
-    assert.ok(acciones.some((a) => a.grupo === 'Retirado del catálogo'));
-    assert.equal(vacia().active, 0);
-    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+    db.prepare("UPDATE room_statuses SET name = 'Bloqueada', active = 1 WHERE code = 'BLOQUEADA'").run();
 
-    // Con una habitación dentro NO se retira: esconderla del catálogo sin
-    // sacar antes a la habitación dejaría un estado invisible en uso.
-    const room = getRoomByNumber('306');
+    // Una habitación dentro que la equivalencia no alcanza a mover: se deja.
+    const room = getRoomByNumber('307');
     const antes = room.status_id;
-    db.prepare("UPDATE room_statuses SET active = 1 WHERE code = 'VACIA'").run();
-    db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: vacia().id, id: room.id });
+    db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: id().id, id: room.id });
+    db.prepare("UPDATE room_statuses SET active = 0 WHERE code = 'FUERA_SERVICIO'").run();
 
     assert.equal(upgrade({ quiet: true }).length, 0, 'un aviso no es un cambio');
-    assert.equal(vacia().active, 1, 'sigue activa mientras esté en uso');
+    assert.equal(id().active, 1, 'sigue activo mientras esté en uso');
 
-    // Liberada la habitación, la siguiente pasada sí la retira.
+    db.prepare("UPDATE room_statuses SET active = 1 WHERE code = 'FUERA_SERVICIO'").run();
     db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: antes, id: room.id });
     upgrade({ quiet: true });
-    assert.equal(vacia().active, 0);
-  });
-
-  test('el estado "Ocupada" pasa a llamarse "En casa"', () => {
-    const { upgrade } = upgradeMod;
-    const nombre = () => one("SELECT name FROM room_statuses WHERE code = 'OCUPADA'").name;
-    db.prepare("UPDATE room_statuses SET name = 'Ocupada' WHERE code = 'OCUPADA'").run();
-    upgrade({ quiet: true });
-    assert.equal(nombre(), 'En casa');
-    // El código no cambia: es lo que enlaza la ocupación con su estado destino.
-    assert.equal(
-      one(`SELECT s.code FROM room_occupancies o
-             JOIN room_statuses s ON s.id = o.target_status_id
-            WHERE o.code = 'OCUPADA'`).code, 'OCUPADA');
+    assert.equal(id().active, 0);
   });
 
   test('la simulación no escribe nada', () => {
@@ -555,9 +549,11 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
     const room = getRoomByNumber('714');
     const res = recordMovement({
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
-      comment: 'La TV no da señal.',
+      comment: 'La TV no da señal.', guestPresent: 'no',
     });
-    assert.equal(res.room.status_code, 'SIS_PENDIENTE');
+    // El reporte no manda a un estado de su área —eso ya no existe—, pero sí
+    // saca de la venta a la habitación que estaba disponible.
+    assert.equal(res.room.status_code, 'FUERA_SERVICIO');
   });
 
   test('pero no puede cerrar el trabajo de Sistemas', () => {
@@ -571,7 +567,7 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
     const room = getRoomByNumber('716');
     const res = recordMovement({
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
-      comment: 'El panel táctil no responde.',
+      comment: 'El panel táctil no responde.', guestPresent: 'no',
     });
     const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
     assert.ok(n, 'debe generarse una notificación');
@@ -580,7 +576,7 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
 
   test('el cierre también avisa a ambos', () => {
     const room = getRoomByNumber('717');
-    recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT', comment: 'WiFi caído.' });
+    recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT', comment: 'WiFi caído.', guestPresent: 'no' });
     const res = recordMovement({
       roomId: room.id, user: user('sistemas'), movementTypeCode: 'SYS_DONE',
       comment: 'Punto de acceso reiniciado.',
@@ -594,7 +590,7 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
     const room = getRoomByNumber('718');
     const res = recordMovement({
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT',
-      comment: 'Fuga en el lavabo.',
+      comment: 'Fuga en el lavabo.', guestPresent: 'no',
     });
     const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
     assert.deepEqual(destinatarios(n.id), ['AMA', 'MTTO']);
@@ -606,7 +602,7 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
     const room = getRoomByNumber('719');
     const res = recordMovement({
       roomId: room.id, user: user('sistemas'), movementTypeCode: 'SYS_REPORT',
-      comment: 'Extensión sin tono.',
+      comment: 'Extensión sin tono.', guestPresent: 'no',
     });
     const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
     assert.deepEqual(destinatarios(n.id), ['SIS'], 'sin copia, sólo el área destino');
@@ -623,22 +619,25 @@ describe('No se libera una habitación con un pendiente abierto', () => {
     roomId: getRoomByNumber(String(numero)).id, user: user(quien),
     statusCode: code, comment: 'Cambio manual de estado.',
   });
+  /** Deja la habitación como la encuentra la camarista: de salida y sucia. */
+  const deSalida = (numero) => estado(numero, 'supervisor', 'SALIDA');
+  const reporte = (numero, quien, code, comentario) => recordMovement({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien),
+    movementTypeCode: code, comment: comentario, guestPresent: 'no',
+  });
 
   test('el ciclo de limpieza sin pendientes llega hasta liberar', () => {
-    mov(608, 'amadellaves', 'CLEAN_START');
+    deSalida(608);
     mov(608, 'amadellaves', 'CLEAN_DONE');
     mov(608, 'amadellaves', 'INSPECTION');
     mov(608, 'supervisor', 'RELEASE', 'Habitación lista.');
     assert.equal(getRoomByNumber('608').counts_ready, 1);
   });
 
-  test('un reporte a Sistemas impide liberar e impide dar por buena la inspección', () => {
-    mov(610, 'amadellaves', 'SYS_REPORT', 'Televisión sin señal.');
-    for (const accion of ['RELEASE', 'INSPECTION']) {
-      assert.throws(() => mov(610, 'supervisor', accion, 'Se intenta cerrar.'),
-        (e) => e instanceof MovementError && e.status === 409 && /no puede quedar como/.test(e.message),
-        `${accion} debería rechazarse con el reporte abierto`);
-    }
+  test('un reporte a Sistemas impide liberar', () => {
+    reporte(610, 'amadellaves', 'SYS_REPORT', 'Televisión sin señal.');
+    assert.throws(() => mov(610, 'supervisor', 'RELEASE', 'Se intenta cerrar.'),
+      (e) => e instanceof MovementError && e.status === 409 && /no puede quedar como/.test(e.message));
     // El mensaje dice qué falta, no sólo que no se puede.
     try { mov(610, 'supervisor', 'RELEASE', 'Se intenta cerrar.'); } catch (e) {
       assert.match(e.message, /610/);
@@ -649,23 +648,23 @@ describe('No se libera una habitación con un pendiente abierto', () => {
 
   test('cerrado el reporte, la habitación se libera con normalidad', () => {
     mov(610, 'sistemas', 'SYS_DONE', 'Decodificador reemplazado.');
-    mov(610, 'amadellaves', 'INSPECTION');
     mov(610, 'supervisor', 'RELEASE', 'Habitación lista.');
     assert.equal(getRoomByNumber('610').counts_ready, 1);
   });
 
-  test('el bloqueo no estorba el resto del ciclo', () => {
-    mov(611, 'amadellaves', 'MAINT_REPORT', 'Chapa floja.');
+  test('el pendiente no estorba el resto del ciclo', () => {
     // Limpiar, comentar y reportar siguen siendo posibles: lo único vedado es
-    // devolver la habitación al servicio.
-    mov(611, 'amadellaves', 'CLEAN_START');
+    // devolver la habitación al servicio. Con el huésped en casa, además, la
+    // limpieza la deja "Ocupado limpio", no a la venta.
+    estado(611, 'supervisor', 'OCUPADO_SUCIO');
+    reporte(611, 'amadellaves', 'MAINT_REPORT', 'Chapa floja.');
     mov(611, 'amadellaves', 'CLEAN_DONE');
     mov(611, 'amadellaves', 'NOTE', 'Queda pendiente la chapa.');
-    assert.equal(getRoomByNumber('611').status_code, 'LIMPIEZA_TERMINADA');
+    assert.equal(getRoomByNumber('611').status_code, 'OCUPADO_LIMPIO');
   });
 
   test('un campo de Mantenimiento en falla también impide liberar', () => {
-    mov(612, 'amadellaves', 'CLEAN_START');
+    deSalida(612);
     recordMovement({
       roomId: getRoomByNumber('612').id, user: user('mantenimiento'),
       details: [{ fieldCode: 'plomeria', value: 'Falla' }],
@@ -683,7 +682,7 @@ describe('No se libera una habitación con un pendiente abierto', () => {
   test('un pendiente de Ama de Llaves no impide liberar', () => {
     // Sólo bloquean las categorías marcadas con `blocks_release`, hoy
     // Mantenimiento y Sistemas. Los blancos los resuelve la propia camarista.
-    mov(613, 'amadellaves', 'CLEAN_START');
+    deSalida(613);
     recordMovement({
       roomId: getRoomByNumber('613').id, user: user('amadellaves'),
       details: [{ fieldCode: 'blancos', value: 'Incompleto' }],
@@ -693,23 +692,23 @@ describe('No se libera una habitación con un pendiente abierto', () => {
   });
 
   test('el cambio manual de estado no es una puerta trasera', () => {
-    mov(614, 'amadellaves', 'SYS_REPORT', 'Caja fuerte trabada.');
-    assert.throws(() => estado(614, 'supervisor', 'DISPONIBLE'),
+    reporte(614, 'amadellaves', 'SYS_REPORT', 'Caja fuerte trabada.');
+    assert.throws(() => estado(614, 'supervisor', 'DISPONIBLE_LIMPIO'),
       (e) => e instanceof MovementError && e.status === 409);
     // Un estado que no devuelve al servicio sí se puede poner.
-    estado(614, 'supervisor', 'EN_LIMPIEZA');
-    assert.equal(getRoomByNumber('614').status_code, 'EN_LIMPIEZA');
+    estado(614, 'supervisor', 'OCUPADO_SUCIO');
+    assert.equal(getRoomByNumber('614').status_code, 'OCUPADO_SUCIO');
   });
 
   test('en bloque: una habitación con pendiente detiene el lote entero', () => {
-    mov(615, 'amadellaves', 'CLEAN_START');
-    mov(616, 'amadellaves', 'CLEAN_START');
-    mov(616, 'amadellaves', 'MAINT_REPORT', 'Regadera goteando.');
+    deSalida(615);
+    deSalida(616);
+    reporte(616, 'amadellaves', 'MAINT_REPORT', 'Regadera goteando.');
     const ids = ['615', '616'].map((n) => getRoomByNumber(n).id);
     assert.throws(
       () => recordBulkMovement({ roomIds: ids, user: user('supervisor'), movementTypeCode: 'RELEASE', comment: 'Piso listo.' }),
       (e) => /616/.test(e.message) && /no puede quedar como/.test(e.message));
-    assert.equal(getRoomByNumber('615').status_code, 'EN_LIMPIEZA', 'el lote es todo o nada');
+    assert.equal(getRoomByNumber('615').status_code, 'SALIDA', 'el lote es todo o nada');
   });
 
   test('el mensaje del lote no repite el número de la habitación', () => {
@@ -738,7 +737,7 @@ describe('Una falla saca la habitación del servicio', () => {
   test('marcar un campo de Mantenimiento en falla retira la habitación de la venta', () => {
     assert.equal(getRoomByNumber('617').counts_ready, 1, 'parte disponible');
     campo(617, 'mantenimiento', 'plomeria', 'Falla');
-    assert.equal(getRoomByNumber('617').status_code, 'MANT_PENDIENTE');
+    assert.equal(getRoomByNumber('617').status_code, 'FUERA_SERVICIO');
   });
 
   test('el retiro queda en el historial como un movimiento propio', () => {
@@ -749,18 +748,18 @@ describe('Una falla saca la habitación del servicio', () => {
     // Los nombres se comparan contra el catálogo: una prueba anterior renombra
     // un estado a propósito, y el historial guarda el nombre del momento.
     const nombre = (code) => one('SELECT name FROM room_statuses WHERE code = @code', { code }).name;
-    assert.equal(retiro.old_status_name, nombre('DISPONIBLE'));
-    assert.equal(retiro.new_status_name, nombre('MANT_PENDIENTE'));
+    assert.equal(retiro.old_status_name, nombre('DISPONIBLE_LIMPIO'));
+    assert.equal(retiro.new_status_name, nombre('FUERA_SERVICIO'));
   });
 
-  test('cada área va a su propio estado pendiente', () => {
+  test('la falla de Sistemas la retira igual que la de Mantenimiento', () => {
     campo(618, 'sistemas', 'wifi', 'Sin servicio');
-    assert.equal(getRoomByNumber('618').status_code, 'SIS_PENDIENTE');
+    assert.equal(getRoomByNumber('618').status_code, 'FUERA_SERVICIO');
   });
 
   test('corregir el campo no devuelve sola la habitación: hay que liberarla', () => {
     campo(617, 'mantenimiento', 'plomeria', 'OK');
-    assert.equal(getRoomByNumber('617').status_code, 'MANT_PENDIENTE');
+    assert.equal(getRoomByNumber('617').status_code, 'FUERA_SERVICIO');
     mov(617, 'supervisor', 'RELEASE', 'Reparada y revisada.');
     assert.equal(getRoomByNumber('617').counts_ready, 1);
   });
@@ -770,21 +769,21 @@ describe('Una falla saca la habitación del servicio', () => {
     assert.equal(getRoomByNumber('619').counts_ready, 1);
   });
 
-  test('una habitación que ya está fuera de servicio no cambia de estado', () => {
-    mov(620, 'amadellaves', 'CLEAN_START');
+  test('una habitación que ya no estaba a la venta no cambia de estado', () => {
+    recordMovement({ roomId: getRoomByNumber('620').id, user: user('supervisor'), statusCode: 'SALIDA' });
     campo(620, 'mantenimiento', 'hvac', 'Falla');
-    assert.equal(getRoomByNumber('620').status_code, 'EN_LIMPIEZA',
+    assert.equal(getRoomByNumber('620').status_code, 'SALIDA',
       'sólo se retira a la que estaba en servicio; el resto sigue su ciclo');
   });
 
   test('pedir un estado de servicio mientras se reporta la falla se rechaza', () => {
-    mov(622, 'amadellaves', 'CLEAN_START');
+    recordMovement({ roomId: getRoomByNumber('622').id, user: user('supervisor'), statusCode: 'SALIDA' });
     assert.throws(
       () => campo(622, 'mantenimiento', 'plomeria', 'Falla', {
-        statusCode: 'DISPONIBLE', comment: 'Contradictorio.',
+        statusCode: 'DISPONIBLE_LIMPIO', comment: 'Contradictorio.',
       }),
       (e) => e instanceof MovementError && e.status === 409 && /en este mismo registro se reporta/.test(e.message));
-    assert.equal(getRoomByNumber('622').status_code, 'EN_LIMPIEZA', 'no debe quedar nada a medias');
+    assert.equal(getRoomByNumber('622').status_code, 'SALIDA', 'no debe quedar nada a medias');
     assert.equal(
       one("SELECT value v FROM room_details rd JOIN fields f ON f.id = rd.field_id WHERE rd.room_id = @r AND f.code = 'plomeria'",
         { r: getRoomByNumber('622').id })?.v ?? 'OK',
@@ -804,7 +803,7 @@ describe('Una falla saca la habitación del servicio', () => {
       user: { ...jefe, permissions: jefe.permissions.filter((p) => p !== 'room.status') },
       details: [{ fieldCode: 'cerraduras', value: 'Falla' }],
     });
-    assert.equal(getRoomByNumber('1002').status_code, 'MANT_PENDIENTE');
+    assert.equal(getRoomByNumber('1002').status_code, 'FUERA_SERVICIO');
   });
 });
 
@@ -812,7 +811,7 @@ describe('Incidencias abiertas por reporte', () => {
   const abiertas = () => stats.overview().incidenciasAbiertas;
   const mov = (numero, quien, code, comentario) => recordMovement({
     roomId: getRoomByNumber(String(numero)).id, user: user(quien),
-    movementTypeCode: code, comment: comentario,
+    movementTypeCode: code, comment: comentario, guestPresent: 'no',
   });
 
   test('un reporte a Sistemas cuenta como incidencia abierta hasta que se cierra', () => {
@@ -834,23 +833,24 @@ describe('Incidencias abiertas por reporte', () => {
 
   test('"Liberar habitación" cierra todo lo pendiente de esa habitación', () => {
     const antes = abiertas();
-    mov(603, 'supervisor', 'BLOCK', 'Obra en el piso.');
     mov(603, 'amadellaves', 'DAMAGE', 'Espejo roto.');
-    assert.equal(abiertas(), antes + 2, 'dos áreas, dos incidencias');
+    mov(603, 'amadellaves', 'DISCREPANCY', 'Recepción la da por ocupada y está vacía.');
+    assert.equal(abiertas(), antes + 2, 'dos reportes, dos incidencias');
     mov(603, 'supervisor', 'RELEASE', 'Todo resuelto.');
     assert.equal(abiertas(), antes);
   });
 
   test('devolver la habitación al servicio también cierra lo pendiente', () => {
-    // Se usa un bloqueo (categoría Otros), no un reporte a Mantenimiento o a
-    // Sistemas: esas áreas impiden devolver la habitación al servicio, así
+    // Se usa un daño (categoría Ama de Llaves), no un reporte a Mantenimiento
+    // o a Sistemas: esas áreas impiden devolver la habitación al servicio, así
     // que con ellas este camino no existe.
-    const antes = abiertas();
     const room = getRoomByNumber('604');
-    mov(604, 'supervisor', 'BLOCK', 'Se bloquea por obra.');
+    recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
+    const antes = abiertas();
+    mov(604, 'amadellaves', 'DAMAGE', 'Cabecera rayada.');
     assert.equal(abiertas(), antes + 1);
     recordMovement({
-      roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE',
+      roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE_LIMPIO',
       comment: 'Se resolvió sin registrar la acción.',
     });
     assert.equal(abiertas(), antes, 'si volvió a estar lista, no queda nada pendiente');
@@ -889,129 +889,121 @@ describe('Incidencias abiertas por reporte', () => {
   });
 });
 
-describe('Ocupación: ¿hay huésped en la habitación?', () => {
-  // La ocupación es un EJE APARTE del estado. El estado dice en qué punto del
-  // ciclo de limpieza va la habitación; la ocupación, si hay alguien dentro.
-  // Sin los dos, "En limpieza" no distingue una habitación de salida de una
-  // que el huésped sigue usando, y es justo lo que Ama de Llaves necesita ver.
+describe('Estados de Arpón y el dato del huésped', () => {
+  // El CDH usa los mismos estados que el PMS del hotel, y lo que hacía falta
+  // saber de verdad —si el huésped estará dentro cuando suba Mantenimiento o
+  // Sistemas— viaja con el reporte, no como un estado de la habitación.
 
-  test('toda habitación arranca vacante', () => {
-    const room = getRoomByNumber('501');
-    assert.equal(room.occupancy_code, 'VACANTE');
-    assert.equal(room.counts_occupied, 0);
+  test('el catálogo es el de Arpón, y sólo ése', () => {
+    const activos = all('SELECT code FROM room_statuses WHERE active = 1 ORDER BY sort_order')
+      .map((s) => s.code);
+    assert.deepEqual(activos, [
+      'DISPONIBLE_LIMPIO', 'ENTRADA_NUEVA', 'OCUPADO_LIMPIO',
+      'OCUPADO_SUCIO', 'SALIDA', 'DISCREPANCIA', 'FUERA_SERVICIO',
+    ]);
   });
 
-  test('la entrada de huésped saca la habitación de la venta en el mismo movimiento', () => {
-    const room = getRoomByNumber('502');
-    assert.equal(room.status_code, 'DISPONIBLE');
+  test('la limpieza lleva a un sitio distinto según de dónde venga', () => {
+    // Es la razón de `clean_status_id`: "Limpieza terminada" no puede apuntar
+    // a un único destino sin mentir en la mitad de los casos.
+    const salida = getRoomByNumber('501');
+    recordMovement({ roomId: salida.id, user: user('supervisor'), statusCode: 'SALIDA' });
+    const limpia = recordMovement({ roomId: salida.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.equal(limpia.room.status_code, 'DISPONIBLE_LIMPIO', 'el huésped se fue: queda a la venta');
 
-    const res = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
-    assert.equal(res.room.occupancy_code, 'OCUPADA');
-    assert.equal(res.room.status_code, 'OCUPADA', 'una habitación con huésped no puede seguir a la venta');
-    assert.ok(res.occupancyChanged && res.statusChanged);
-
-    // Un solo movimiento cuenta las dos cosas: no hay que cruzar dos renglones.
-    assert.equal(res.movementIds.length, 1);
-    const m = one('SELECT * FROM movements WHERE id = @id', { id: res.primaryId });
-    assert.equal(m.old_occupancy_name, 'Huésped ausente');
-    assert.equal(m.new_occupancy_name, 'Huésped ahí');
-    assert.equal(m.old_status_id, room.status_id);
-    assert.equal(m.new_status_name, 'En casa');
+    const enCasa = getRoomByNumber('502');
+    recordMovement({ roomId: enCasa.id, user: user('supervisor'), statusCode: 'OCUPADO_SUCIO' });
+    const atendida = recordMovement({ roomId: enCasa.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.equal(atendida.room.status_code, 'OCUPADO_LIMPIO', 'el huésped se queda: no vuelve a la venta');
   });
 
-  test('una habitación ocupada no puede quedar disponible', () => {
+  test('no se puede dar por limpia una habitación que no esperaba limpieza', () => {
     const room = getRoomByNumber('503');
-    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
+    assert.equal(room.status_code, 'DISPONIBLE_LIMPIO');
     assert.throws(
-      () => recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE' }),
-      (e) => e.status === 409 && /salida del huésped/.test(e.message));
-    assert.equal(getRoomByNumber('503').status_code, 'OCUPADA', 'nada cambió');
+      () => recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' }),
+      (e) => e.status === 409 && /no espera limpieza/.test(e.message));
   });
 
-  test('la limpieza y la inspección sí ocurren con el huésped en casa', () => {
-    // Una habitación de "se queda otra noche" se limpia e inspecciona igual;
-    // lo único que no puede es volver a venderse.
+  test('el reporte lleva si el huésped estará en la habitación', () => {
     const room = getRoomByNumber('504');
-    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
-
-    const limpia = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
-    assert.equal(limpia.room.status_code, 'LIMPIEZA_TERMINADA');
-    assert.equal(limpia.room.occupancy_code, 'OCUPADA', 'limpiar no echa al huésped');
-
-    const inspeccion = recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'INSPECTION' });
-    assert.equal(inspeccion.room.status_code, 'INSPECCIONADA');
-    assert.equal(inspeccion.room.occupancy_code, 'OCUPADA');
-  });
-
-  test('liberar una habitación de salida la deja vacante sola', () => {
-    const room = getRoomByNumber('505');
-    recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_IN' });
-    const salida = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'CHECK_OUT' });
-    assert.equal(salida.room.occupancy_code, 'SALIDA');
-    assert.equal(salida.room.status_code, 'OCUPADA', 'la salida no decide el estado: eso lo reporta la camarista');
-
-    const libre = recordMovement({ roomId: room.id, user: user('supervisor'), movementTypeCode: 'RELEASE' });
-    assert.equal(libre.room.status_code, 'DISPONIBLE');
-    assert.equal(libre.room.occupancy_code, 'VACANTE', 'a la venta y con huésped es una contradicción');
-  });
-
-  test('el "no molestar" cuenta como habitación con huésped', () => {
-    const room = getRoomByNumber('506');
-    const res = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'DND_ON' });
-    assert.equal(res.room.occupancy_code, 'NO_MOLESTAR');
-    assert.equal(res.room.do_not_disturb, 1);
-    assert.equal(res.room.counts_occupied, 1);
-
-    const fuera = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'DND_OFF' });
-    assert.equal(fuera.room.occupancy_code, 'OCUPADA');
-  });
-
-  test('sin el permiso de ocupación no se registra la entrada', () => {
-    const room = getRoomByNumber('508');
-    const sinPermiso = {
-      ...user('amadellaves'),
-      permissions: user('amadellaves').permissions.filter((p) => p !== 'room.occupancy'),
-    };
-    assert.throws(
-      () => recordMovement({ roomId: room.id, user: sinPermiso, occupancyCode: 'OCUPADA' }),
-      (e) => e.status === 403);
-  });
-
-  test('los contadores separan ocupación de estado', () => {
-    const o = stats.overview();
-    const ocupadasReales = one(`
-      SELECT COUNT(*) n FROM rooms r
-        JOIN room_occupancies oc ON oc.id = r.occupancy_id
-       WHERE r.active = 1 AND oc.counts_occupied = 1`).n;
-    assert.equal(o.ocupadas, ocupadasReales);
-    assert.ok(o.ocupacion.some((x) => x.code === 'VACANTE'), 'el reparto nombra cada ocupación');
-    assert.equal(o.ocupacion.reduce((n, x) => n + x.rooms, 0),
-      one('SELECT COUNT(*) n FROM rooms WHERE active = 1').n);
-  });
-
-  test('recepción marca en bloque las salidas de un piso', () => {
-    const ids = ['510', '512', '513'].map((n) => getRoomByNumber(n).id);
-    const r = recordBulkMovement({
-      roomIds: ids, user: user('recepcion'), occupancyCode: 'SALIDA',
-      comment: 'Salidas del día.',
+    const res = recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
+      comment: 'La TV no enciende.', guestPresent: 'no', guestPresent: 'si',
     });
-    assert.equal(r.aplicadas.length, 3);
-    for (const id of ids) {
-      assert.equal(one(`SELECT o.code FROM rooms r JOIN room_occupancies o ON o.id = r.occupancy_id
-                         WHERE r.id = @id`, { id }).code, 'SALIDA');
-    }
-    // Repetir el lote no ensucia el historial: ya estaban así.
+    const m = one('SELECT * FROM movements WHERE id = @id', { id: res.primaryId });
+    assert.equal(m.guest_present, 'si');
+    // El dato viaja con el reporte; lo que mueve el estado es que la
+    // habitación estuviera a la venta con un pendiente abierto.
+    assert.equal(res.room.status_code, 'FUERA_SERVICIO');
+  });
+
+  test('un reporte sin ese dato se rechaza', () => {
+    const room = getRoomByNumber('505');
     assert.throws(
-      () => recordBulkMovement({ roomIds: ids, user: user('recepcion'), occupancyCode: 'SALIDA' }),
-      (e) => /ya tenía esa ocupación/.test(e.message));
+      () => recordMovement({ roomId: room.id, user: user('amadellaves'),
+        movementTypeCode: 'MAINT_REPORT', comment: 'Fuga en el lavabo.' }),
+      (e) => e.status === 400 && /si el huésped estará/.test(e.message));
+    assert.throws(
+      () => recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT',
+        comment: 'Fuga en el lavabo.', guestPresent: 'quizá' }),
+      (e) => e.status === 400 && /Valor inválido/.test(e.message));
+  });
+
+  test('la notificación al área destino lo dice primero', () => {
+    const room = getRoomByNumber('514');
+    const res = recordMovement({
+      roomId: room.id, user: user('amadellaves'), movementTypeCode: 'MAINT_REPORT',
+      comment: 'Regadera goteando.', guestPresent: 'si',
+    });
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: res.primaryId });
+    assert.match(n.body, /^El huésped estará en la habitación\./,
+      'quien sube necesita saberlo antes que el detalle');
+    assert.match(n.body, /Regadera goteando/);
+  });
+
+  test('las acciones que no lo preguntan no lo guardan', () => {
+    const room = getRoomByNumber('506');
+    const res = recordMovement({ roomId: room.id, user: user('amadellaves'),
+      movementTypeCode: 'NOTE', comment: 'Sin novedad.', guestPresent: 'si' });
+    assert.equal(one('SELECT guest_present FROM movements WHERE id = @id', { id: res.primaryId }).guest_present, null,
+      'el dato sólo tiene sentido donde se pregunta');
+  });
+
+  test('el reporte sigue impidiendo que la habitación quede a la venta', () => {
+    // El reporte ya no mueve el estado; la garantía la da la incidencia abierta.
+    const room = getRoomByNumber('508');
+    recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
+      comment: 'Caja fuerte trabada.', guestPresent: 'no', guestPresent: 'no' });
+    assert.throws(
+      () => recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE_LIMPIO' }),
+      (e) => e.status === 409 && /sin cerrar/.test(e.message));
+  });
+
+  test('un lote omite las habitaciones que no esperaban limpieza', () => {
+    const ids = ['510', '512', '513'].map((n) => getRoomByNumber(n).id);
+    recordMovement({ roomId: ids[0], user: user('supervisor'), statusCode: 'SALIDA' });
+    const r = recordBulkMovement({
+      roomIds: ids, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
+    });
+    assert.equal(r.aplicadas.length, 1, 'sólo la que esperaba limpieza');
+    assert.equal(r.omitidas.length, 2);
+    assert.ok(r.omitidas.every((o) => o.motivo === 'no esperaba limpieza'));
   });
 });
 
 describe('Cambios en bloque', () => {
   const idsDe = (...numeros) => numeros.map((n) => getRoomByNumber(String(n)).id);
+  /** Deja las habitaciones como las encuentra la camarista. */
+  const deSalida = (...numeros) => {
+    for (const id of idsDe(...numeros)) {
+      recordMovement({ roomId: id, user: user('supervisor'), statusCode: 'SALIDA' });
+    }
+    return idsDe(...numeros);
+  };
 
   test('una acción sobre varias habitaciones deja un movimiento en cada una', () => {
-    const ids = idsDe(1001, 1002, 1003);
+    const ids = deSalida(1101, 1102, 1103);
     const antes = one('SELECT COUNT(*) n FROM movements').n;
     const r = recordBulkMovement({
       roomIds: ids, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
@@ -1023,14 +1015,15 @@ describe('Cambios en bloque', () => {
     for (const id of ids) {
       const m = one('SELECT * FROM movements WHERE room_id = @id ORDER BY id DESC LIMIT 1', { id });
       assert.equal(m.action_code, 'CLEAN_DONE');
-      assert.equal(m.new_status_name, 'Limpieza terminada');
+      assert.equal(m.new_status_id,
+        one("SELECT id FROM room_statuses WHERE code = 'DISPONIBLE_LIMPIO'").id);
       assert.equal(m.comment, 'Ronda matutina del piso 10.');
       assert.ok(m.user_name && m.local_time && m.timezone, 'el sello del servidor no cambia por ser un lote');
     }
   });
 
   test('cada habitación conserva su propio lote: el historial no se comparte', () => {
-    const ids = idsDe(1005, 1006);
+    const ids = deSalida(1106, 1107);
     const r = recordBulkMovement({
       roomIds: ids, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
     });
@@ -1062,8 +1055,8 @@ describe('Cambios en bloque', () => {
 
   test('las habitaciones que ya están en el estado destino se omiten, no fallan', () => {
     const ids = idsDe(1012, 1014);
-    recordBulkMovement({ roomIds: [ids[0]], user: user('supervisor'), statusCode: 'BLOQUEADA', comment: 'Obra.' });
-    const r = recordBulkMovement({ roomIds: ids, user: user('supervisor'), statusCode: 'BLOQUEADA' });
+    recordBulkMovement({ roomIds: [ids[0]], user: user('supervisor'), statusCode: 'FUERA_SERVICIO', comment: 'Obra.' });
+    const r = recordBulkMovement({ roomIds: ids, user: user('supervisor'), statusCode: 'FUERA_SERVICIO' });
     assert.equal(r.aplicadas.length, 1);
     assert.equal(r.omitidas.length, 1);
     assert.match(r.omitidas[0].motivo, /ya estaba/);
@@ -1080,13 +1073,13 @@ describe('Cambios en bloque', () => {
 
   test('el lote respeta los permisos igual que un cambio individual', () => {
     assert.throws(
-      () => recordBulkMovement({ roomIds: idsDe(1018, 1019), user: user('recepcion'), movementTypeCode: 'CLEAN_DONE' }),
+      () => recordBulkMovement({ roomIds: deSalida(1018, 1019), user: user('recepcion'), movementTypeCode: 'CLEAN_DONE' }),
       (e) => e instanceof MovementError && e.status === 403);
   });
 
   test('el lote deja una entrada de auditoría que lo identifica como tal', () => {
     const r = recordBulkMovement({
-      roomIds: idsDe(1020, 1022), user: user('amadellaves'), movementTypeCode: 'CLEAN_START',
+      roomIds: deSalida(1020, 1022), user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE',
     });
     const a = one("SELECT * FROM audit_log WHERE action = 'bulk_movement' ORDER BY id DESC LIMIT 1");
     assert.equal(a.entity_id, r.bulkId);
@@ -1099,6 +1092,6 @@ describe('Cambios en bloque', () => {
     assert.throws(() => recordBulkMovement({ roomIds: [], user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' }),
       (e) => /al menos una habitación/.test(e.message));
     assert.throws(() => recordBulkMovement({ roomIds: idsDe(1001), user: user('amadellaves') }),
-      (e) => /Elija una acción, un estado o una ocupación/.test(e.message));
+      (e) => /Elija una acción o un estado/.test(e.message));
   });
 });

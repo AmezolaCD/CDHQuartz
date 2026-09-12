@@ -6,36 +6,16 @@ import { navigate } from '../router.js';
 import { openRoom } from './room.js';
 import { bulkActivo, bulkAlternar, bulkPiso, bulkPuedeUsarse, montarBarraBloque } from './bulk.js';
 
-/**
- * Etiqueta de ocupación de una habitación. Se dibuja SIEMPRE, también cuando
- * no hay huésped: en una hoja de piso, "no dice nada" y "no hay nadie" tienen
- * que distinguirse a simple vista.
- *
- * Ocupa su propio renglón de la tarjeta, no la fila de distintivos: el nombre
- * completo importa —"Huésped ahí" y "Huésped ausente" se diferencian por la
- * última palabra— y ahí cabe aunque tenga que partirse en dos líneas.
- */
-export function occupancyTag(r, size = 10) {
-  const [color, nombre, ico] = r.occupancy_code
-    ? [esc(r.occupancy_color), esc(r.occupancy_name), r.occupancy_icon]
-    : ['var(--ink-4)', 'Ocupación sin registrar', 'user'];
-  return `<span class="occ" style="--oc:${color}" title="Ocupación: ${nombre}">${
-    icon(ico, size)}<span>${nombre}</span></span>`;
-}
-
 /** Tarjeta compacta de habitación para el mapa del piso. */
 export function roomCard(r) {
   const flags = [];
   if (r.incidentCount) flags.push(`<span class="flag inc" title="Incidencias abiertas">${icon('alert', 10)}${r.incidentCount}</span>`);
   if (r.recurrenceCount >= 2) flags.push(`<span class="flag rec" title="Reincidente">${icon('repeat', 10)}${r.recurrenceCount}</span>`);
   if (!r.incidentCount && r.counts_attention) flags.push(`<span class="flag att">${icon('bell', 10)}</span>`);
-  return `<button class="room ${r.active ? '' : 'inactive'}" style="--st:${esc(r.status_color)};--oc:${
-      esc(r.occupancy_color ?? 'transparent')}"
-      data-room="${r.id}" data-occupied="${r.counts_occupied ? 1 : 0}"
-      title="Habitación ${esc(r.number)} — ${esc(r.status_name)} · ${esc(r.occupancy_name ?? 'ocupación sin registrar')}">
+  return `<button class="room ${r.active ? '' : 'inactive'}" style="--st:${esc(r.status_color)}"
+      data-room="${r.id}" title="Habitación ${esc(r.number)} — ${esc(r.status_name)}">
     <span class="num">${esc(r.number)}</span>
     <span class="st">${icon(r.status_icon, 11)}<span>${esc(r.status_name)}</span></span>
-    ${occupancyTag(r)}
     <span class="flags">${flags.join('')}</span>
   </button>`;
 }
@@ -54,12 +34,10 @@ function kpis(o) {
   return [
     kpi('Habitaciones', o.total, { accent: 'var(--plum-500)', target: o.target !== o.total ? o.target : null,
       sub: o.inactivas ? `${o.inactivas} inactivas` : 'Todas activas' }),
-    kpi('Listas', o.listas, { accent: 'var(--ok)' }),
-    // La ocupación no sale del estado: una habitación en limpieza puede tener
-    // al huésped en casa. Por eso tiene su propio indicador.
-    kpi('Con huésped', o.ocupadas ?? 0, { accent: '#2563eb',
-      sub: o.noMolestar ? `${o.noMolestar} no molestar` : `${(o.total ?? 0) - (o.ocupadas ?? 0)} sin huésped` }),
-    kpi('En limpieza', o.limpieza, { accent: '#0891b2' }),
+    kpi('Disponibles limpias', o.listas, { accent: 'var(--ok)' }),
+    // Con los estados del PMS no hay un "en limpieza": lo que cuenta es lo que
+    // le falta a Ama de Llaves por atender.
+    kpi('Por limpiar', o.limpieza, { accent: '#0891b2' }),
     kpi('Mantenimiento', o.mantenimiento, { accent: 'var(--warn)' }),
     kpi('Bloqueadas', o.bloqueadas, { accent: '#7f1d1d' }),
     kpi('Pendientes', o.pendientes, { accent: '#d97706' }),
@@ -101,17 +79,13 @@ export async function renderFloorMap(container, floorId, onRoomChange) {
         <div>
           <h2>${esc(data.floor.name)}</h2>
           <p class="tiny muted" style="margin:3px 0 0">
-            ${data.totals.rooms} habitaciones${data.totals.occupied ? ` · ${data.totals.occupied} con huésped` : ''}${
-              data.totals.attention ? ` · ${data.totals.attention} requieren atención` : ''}
+            ${data.totals.rooms} habitaciones${data.totals.attention ? ` · ${data.totals.attention} requieren atención` : ''}
             ${enBloque ? ' · <strong>toque las habitaciones para seleccionarlas</strong>' : ''}
           </p>
         </div>
         <div class="row wrap" style="gap:6px;justify-content:flex-end">
           ${bulkPuedeUsarse() ? `<button class="btn sm ${enBloque ? 'primary' : 'ghost'}" data-bulk>
             ${icon('layers', 14)}${enBloque ? 'Salir de selección' : 'Selección múltiple'}</button>` : ''}
-          ${(data.occupancySummary ?? []).map((o) =>
-            `<span class="chip" style="color:${esc(o.color)};border-color:${esc(o.color)}55;background:${esc(o.color)}1a"
-               title="Ocupación">${icon(o.icon, 12)}${esc(o.name)} ${o.rooms}</span>`).join('')}
           ${data.statusSummary.map((s) =>
             `<span class="chip" style="color:${esc(s.color)};border-color:${esc(s.color)}33;background:${esc(s.color)}12">
               ${icon(s.icon, 12)}${esc(s.name)} ${s.rooms}</span>`).join('')}
@@ -170,9 +144,6 @@ export function attentionRow(item) {
         } tiny">${esc(r.label)}</span>`).join('')}
       </span>
       <div class="tiny muted" style="margin-top:3px">${esc(item.floor_name)} · ${esc(item.status_name)}${
-        // Subir a una habitación con el aviso de "no molestar" es un viaje
-        // perdido: se dice aquí, antes de que alguien la tome de la lista.
-        item.counts_occupied ? ` · <strong style="color:${esc(item.occupancy_color)}">${esc(item.occupancy_name)}</strong>` : ''}${
         item.updated_at ? ` · ${relative(item.updated_at)}` : ''}</div>
     </span>
     ${icon('chevron', 15, 'style="color:var(--ink-4)"')}

@@ -15,25 +15,9 @@ import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
 import {
-  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_OCCUPANCIES, ROOM_TYPES,
+  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
   CATEGORIES, MOVEMENT_TYPES, SETTINGS,
 } from './catalog.js';
-
-/**
- * Nombres del catálogo que el propio CDH mejora al actualizar. No es una
- * migración de datos: cambia una etiqueta, nunca una bandera ni una relación,
- * y sólo cuando nadie la ha tocado (ver más abajo).
- */
-const RENOMBRES = [
-  // "Ocupada" y "Vacante" se confundían con el estado de la habitación; en el
-  // pasillo lo que hace falta saber es si hay alguien dentro.
-  { tabla: 'room_occupancies', code: 'VACANTE', de: 'Vacante', a: 'Huésped ausente' },
-  { tabla: 'room_occupancies', code: 'OCUPADA', de: 'Ocupada', a: 'Huésped ahí' },
-  // El estado dejó de llamarse como la etiqueta de ocupación: "En casa" es la
-  // habitación durante la estancia —limpia, en servicio y fuera de la venta—
-  // y quién está dentro lo dice la ocupación.
-  { tabla: 'room_statuses', code: 'OCUPADA', de: 'Ocupada', a: 'En casa' },
-];
 
 /**
  * Entradas del catálogo que el CDH deja de usar. Nunca se borran —el historial
@@ -41,13 +25,68 @@ const RENOMBRES = [
  * condiciones que la hacen segura y reversible desde Administración.
  */
 const RETIRADOS = [
-  {
-    tabla: 'room_statuses',
-    code: 'VACIA',
-    de: 'Vacía',
-    porque: 'la ocupación "Huésped ausente" dice lo mismo sin mezclarse con el ciclo de limpieza',
-  },
+  // Los estados propios del CDH ceden el sitio a los de Arpón: el rack y la
+  // pantalla de Ama de Llaves del PMS tienen que decir lo mismo.
+  ...[
+    ['DISPONIBLE', 'Disponible'], ['OCUPADA', 'En casa'], ['VACIA', 'Vacía'],
+    ['EN_LIMPIEZA', 'En limpieza'], ['LIMPIEZA_TERMINADA', 'Limpieza terminada'],
+    ['INSPECCION_PENDIENTE', 'Inspección pendiente'], ['INSPECCIONADA', 'Inspeccionada'],
+    ['MANT_PENDIENTE', 'Mantenimiento pendiente'], ['EN_MANTENIMIENTO', 'En mantenimiento'],
+    ['SIS_PENDIENTE', 'Sistemas pendiente'], ['EN_SISTEMAS', 'En atención de Sistemas'],
+    ['BLOQUEADA', 'Bloqueada'], ['REQUIERE_ATENCION', 'Requiere atención'],
+  ].map(([code, de]) => ({
+    tabla: 'room_statuses', code, de,
+    porque: 'el hotel pasa a los estados de Arpón',
+  })),
+  // El eje de ocupación se queda sin trabajo: los estados de Arpón ya dicen si
+  // hay huésped, y lo que hacía falta de verdad —si estará dentro cuando suba
+  // el área responsable— es ahora un dato del reporte.
+  ...[
+    ['VACANTE', 'Huésped ausente'], ['OCUPADA', 'Huésped ahí'],
+    ['SALIDA', 'Salida'], ['NO_MOLESTAR', 'No molestar'],
+  ].map(([code, de]) => ({
+    tabla: 'room_occupancies', code, de,
+    porque: 'la ocupación pasó a ser un dato del reporte, no un estado de la habitación',
+  })),
+  // Acciones que apuntaban a estados que ya no existen.
+  ...[
+    ['CLEAN_START', 'Iniciar limpieza'], ['MAINT_START', 'Iniciar mantenimiento'],
+    ['SYS_START', 'Iniciar atención de Sistemas'], ['BLOCK', 'Bloquear habitación'],
+    ['CHECK_IN', 'Entrada de huésped'], ['CHECK_OUT', 'Salida de huésped'],
+    ['DND_ON', 'Marcar no molestar'], ['DND_OFF', 'Quitar no molestar'],
+    ['OCCUPANCY_CHANGE', 'Cambio de ocupación'],
+  ].map(([code, de]) => ({
+    tabla: 'movement_types', code, de,
+    porque: 'apuntaba a un estado que el hotel ya no usa',
+  })),
 ];
+
+/**
+ * A dónde va cada habitación que esté en un estado que se retira. Se apoya en
+ * la ocupación que el CDH venía registrando —el dato está ahí y es el que
+ * distingue una habitación a medio limpiar con el huésped en casa de una de
+ * salida—, y nunca manda a un estado vendible algo que no lo fuera ya.
+ */
+const EQUIVALENCIAS = [
+  { de: 'DISPONIBLE',           conHuesped: 'OCUPADO_LIMPIO', sinHuesped: 'DISPONIBLE_LIMPIO' },
+  { de: 'INSPECCIONADA',        conHuesped: 'OCUPADO_LIMPIO', sinHuesped: 'DISPONIBLE_LIMPIO' },
+  { de: 'LIMPIEZA_TERMINADA',   conHuesped: 'OCUPADO_LIMPIO', sinHuesped: 'DISPONIBLE_LIMPIO' },
+  { de: 'OCUPADA',              conHuesped: 'OCUPADO_LIMPIO', sinHuesped: 'OCUPADO_LIMPIO' },
+  { de: 'EN_LIMPIEZA',          conHuesped: 'OCUPADO_SUCIO',  sinHuesped: 'SALIDA' },
+  { de: 'INSPECCION_PENDIENTE', conHuesped: 'OCUPADO_SUCIO',  sinHuesped: 'SALIDA' },
+  { de: 'VACIA',                conHuesped: 'OCUPADO_SUCIO',  sinHuesped: 'SALIDA' },
+  // Con trabajo pendiente, fuera de servicio: nada que no se pudiera vender
+  // antes acaba pudiéndose vender después de la puesta al día.
+  { de: 'MANT_PENDIENTE',       conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+  { de: 'EN_MANTENIMIENTO',     conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+  { de: 'SIS_PENDIENTE',        conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+  { de: 'EN_SISTEMAS',          conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+  { de: 'BLOQUEADA',            conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+  { de: 'REQUIERE_ATENCION',    conHuesped: 'FUERA_SERVICIO', sinHuesped: 'FUERA_SERVICIO' },
+];
+
+/** Permisos que dejan de existir. No los referencia el historial. */
+const PERMISOS_RETIRADOS = ['room.occupancy'];
 
 function parseArgs(argv) {
   const opts = { dryRun: false, timezone: null, promote: null };
@@ -147,58 +186,111 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
     }
 
     // ----------------------------------------------------------- Estados
-    ROOM_STATUSES.forEach((s, i) => {
-      if (!idPor('room_statuses', s.code)) {
-        insert('room_statuses', { ...s, sort_order: i + 1, is_system: 1 });
-        anotar('Estado', s.name);
+    ROOM_STATUSES.forEach((st, i) => {
+      if (idPor('room_statuses', st.code)) return;
+      const { clean_status, ...fila } = st;
+      insert('room_statuses', { ...fila, sort_order: i + 1, is_system: 1 });
+      anotar('Estado', st.name);
+    });
+    // El destino al terminar la limpieza se enlaza en una segunda vuelta:
+    // apunta a otro estado de la misma tabla, que puede acabar de nacer.
+    for (const st of ROOM_STATUSES) {
+      if (!st.clean_status) continue;
+      const fila = one('SELECT id, clean_status_id FROM room_statuses WHERE code = @code', { code: st.code });
+      const destino = idPor('room_statuses', st.clean_status);
+      if (!fila || !destino || fila.clean_status_id) continue;
+      db.prepare('UPDATE room_statuses SET clean_status_id = @destino WHERE id = @id')
+        .run({ destino, id: fila.id });
+      anotar('Destino al limpiar', `${st.name} → ${st.clean_status}`);
+    }
+
+    // --------------------------- Habitaciones a los estados de Arpón
+    // Un estado no se puede retirar con habitaciones dentro, así que primero
+    // se mueven. Se apoya en la ocupación que el CDH venía registrando —es el
+    // dato que distingue una habitación a medio limpiar con el huésped en casa
+    // de una de salida— y nunca manda a un estado vendible algo que no lo
+    // fuera ya. La mudanza entera queda en la bitácora, habitación por
+    // habitación.
+    const mudanzas = [];
+    for (const eq of EQUIVALENCIAS) {
+      const viejo = one('SELECT id, name FROM room_statuses WHERE code = @code', { code: eq.de });
+      if (!viejo) continue;
+      const dentro = all(`
+        SELECT r.id, r.number, COALESCE(o.counts_occupied, 0) AS conHuesped
+          FROM rooms r
+          LEFT JOIN room_occupancies o ON o.id = r.occupancy_id
+         WHERE r.status_id = @id`, { id: viejo.id });
+      for (const hab of dentro) {
+        const destino = one('SELECT id, name FROM room_statuses WHERE code = @code AND active = 1',
+          { code: hab.conHuesped ? eq.conHuesped : eq.sinHuesped });
+        if (!destino) continue;
+        db.prepare('UPDATE rooms SET status_id = @s, status_changed_at = @now WHERE id = @id')
+          .run({ s: destino.id, now: new Date().toISOString(), id: hab.id });
+        mudanzas.push({ habitacion: hab.number, de: viejo.name, a: destino.name });
       }
-    });
-
-    // -------------------------------------------------------- Ocupaciones
-    ROOM_OCCUPANCIES.forEach((o, i) => {
-      if (idPor('room_occupancies', o.code)) return;
-      const { target_status, ...fila } = o;
-      insert('room_occupancies', {
-        ...fila,
-        target_status_id: target_status ? idPor('room_statuses', target_status) : null,
-        sort_order: i + 1,
-        is_system: 1,
+    }
+    if (mudanzas.length) {
+      const porDestino = {};
+      for (const m of mudanzas) {
+        const clave = `${m.de} → ${m.a}`;
+        porDestino[clave] = (porDestino[clave] ?? 0) + 1;
+      }
+      anotar('Habitaciones al catálogo de Arpón',
+        Object.entries(porDestino).map(([k, n]) => `${n} × ${k}`).join('; '));
+      audit({
+        entityType: 'system', entityId: 'estados-arpon',
+        entityLabel: 'Paso a los estados de Arpón',
+        action: 'upgrade', after: { habitaciones: mudanzas },
+        reason: 'El catálogo de estados pasa a ser el de Arpón; ninguna habitación puede quedar en un estado retirado.',
       });
-      anotar('Ocupación', o.name);
-    });
+    }
 
-    // Un renombre de catálogo sólo se aplica si la fila conserva EXACTAMENTE
-    // el nombre con el que se publicó. Si el hotel ya la renombró desde
-    // Administración, su decisión manda y aquí no ocurre nada: la condición se
-    // agota sola, así que la segunda pasada tampoco cambia nada.
-    //
-    // El historial no se toca: los movimientos guardan una copia del nombre
-    // que la ocupación tenía cuando se registraron, y así debe seguir.
-    for (const r of RENOMBRES) {
-      const fila = one(`SELECT id, name FROM ${r.tabla} WHERE code = @code`, { code: r.code });
-      if (!fila || fila.name !== r.de) continue;
-      db.prepare(`UPDATE ${r.tabla} SET name = @a WHERE id = @id`).run({ a: r.a, id: fila.id });
-      anotar('Nombre más claro', `${r.de} → ${r.a}`);
+    // Hecha la mudanza, la ocupación de la habitación deja de tener lectores:
+    // la columna se vacía para que el eje pueda retirarse de verdad. Lo que
+    // decía no se pierde —cada movimiento guarda su propia copia y la mudanza
+    // entera queda arriba en la bitácora—, pero deja de ser estado vigente.
+    const conOcupacion = one('SELECT COUNT(*) AS n FROM rooms WHERE occupancy_id IS NOT NULL').n;
+    if (conOcupacion && one("SELECT 1 x FROM room_occupancies WHERE code = 'VACANTE' AND active = 1")) {
+      db.prepare('UPDATE rooms SET occupancy_id = NULL, occupancy_changed_at = NULL').run();
+      anotar('Ocupación retirada de la habitación',
+        `${conOcupacion} habitaciones dejan de llevar un eje de ocupación`);
     }
 
     // ------------------------------------------------ Bajas del catálogo
     // Se retira una entrada sólo si: sigue activa, conserva el nombre con el
     // que se publicó —si el hotel la renombró, la está usando para otra cosa—
-    // y ninguna habitación está en ella. Con una sola habitación dentro se
-    // deja como está y se dice: dar de baja un estado en uso lo escondería de
-    // los catálogos sin sacar a la habitación de él.
+    // y nada la está usando. Si algo la usa se deja como está y se avisa: dar
+    // de baja una entrada en uso la escondería de los catálogos sin sacar de
+    // ella a quien la usa.
+    const enUsoPor = {
+      room_statuses: (id) => one('SELECT COUNT(*) AS n FROM rooms WHERE status_id = @id', { id }).n,
+      room_occupancies: (id) => one('SELECT COUNT(*) AS n FROM rooms WHERE occupancy_id = @id', { id }).n,
+      // El historial guarda su propia copia del nombre de la acción, así que
+      // retirarla no deja ningún movimiento huérfano.
+      movement_types: () => 0,
+    };
     for (const r of RETIRADOS) {
       const fila = one(`SELECT id, name, active FROM ${r.tabla} WHERE code = @code`, { code: r.code });
       if (!fila || !fila.active || fila.name !== r.de) continue;
-      const enUso = one('SELECT COUNT(*) AS n FROM rooms WHERE status_id = @id', { id: fila.id }).n;
+      const enUso = enUsoPor[r.tabla](fila.id);
       if (enUso) {
         avisos.push(`"${r.de}" no se retira: ${
           enUso === 1 ? 'hay 1 habitación' : `hay ${enUso} habitaciones`
-        } en ese estado. Muévalas y vuelva a ejecutar la puesta al día.`);
+        } usándolo. Muévalas y vuelva a ejecutar la puesta al día.`);
         continue;
       }
       db.prepare(`UPDATE ${r.tabla} SET active = 0 WHERE id = @id`).run({ id: fila.id });
       anotar('Retirado del catálogo', `${r.de} — ${r.porque}`);
+    }
+
+    // Los permisos no llevan baja lógica y el historial no los referencia: se
+    // eliminan, y con ellos su asignación a cada rol.
+    for (const code of PERMISOS_RETIRADOS) {
+      const permiso = one('SELECT id, name FROM permissions WHERE code = @code', { code });
+      if (!permiso) continue;
+      db.prepare('DELETE FROM role_permissions WHERE permission_id = @id').run({ id: permiso.id });
+      db.prepare('DELETE FROM permissions WHERE id = @id').run({ id: permiso.id });
+      anotar('Permiso retirado', `${permiso.name} (${code})`);
     }
 
     // -------------------------------------------------- Tipos de habitación
@@ -234,12 +326,11 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
     // ------------------------------------------------ Tipos de movimiento
     for (const m of MOVEMENT_TYPES) {
       if (idPor('movement_types', m.code)) continue;
-      const { category, target_status, target_occupancy, ...fila } = m;
+      const { category, target_status, ...fila } = m;
       insert('movement_types', {
         ...fila,
         category_id: category ? idPor('categories', category) : null,
         target_status_id: target_status ? idPor('room_statuses', target_status) : null,
-        target_occupancy_id: target_occupancy ? idPor('room_occupancies', target_occupancy) : null,
       });
       anotar('Acción', m.name);
     }
@@ -271,26 +362,6 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       const campos = [...new Set(faltantes.map((x) => x.label))];
       anotar('Detalles sembrados',
         `${faltantes.length} valores en habitaciones existentes (${campos.join(', ')})`);
-    }
-
-    // ------------------------- Ocupación inicial de las habitaciones vivas
-    // Sólo rellena lo que está en NULL: la columna acaba de nacer, así que
-    // nadie pudo decidir su valor. Una habitación cuyo ESTADO era "Ocupada"
-    // arranca como ocupada; el resto, vacante. Nunca se cambia un estado.
-    const vacante = one('SELECT id FROM room_occupancies WHERE is_default = 1 AND active = 1 ORDER BY sort_order')?.id;
-    const ocupada = one("SELECT id FROM room_occupancies WHERE code = 'OCUPADA'")?.id;
-    if (vacante) {
-      const sinOcupacion = one('SELECT COUNT(*) AS n FROM rooms WHERE occupancy_id IS NULL').n;
-      if (sinOcupacion) {
-        if (ocupada) {
-          db.prepare(`
-            UPDATE rooms SET occupancy_id = @ocupada
-             WHERE occupancy_id IS NULL
-               AND status_id = (SELECT id FROM room_statuses WHERE code = 'OCUPADA')`).run({ ocupada });
-        }
-        db.prepare('UPDATE rooms SET occupancy_id = @vacante WHERE occupancy_id IS NULL').run({ vacante });
-        anotar('Ocupación sembrada', `${sinOcupacion} habitaciones existentes`);
-      }
     }
 
     // ------------------------------------------------- Opciones explícitas

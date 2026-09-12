@@ -113,18 +113,26 @@ CREATE TABLE IF NOT EXISTS room_statuses (
   -- 1 = estado de VENTA: exige que la habitación esté sin huésped. Ninguna
   -- habitación ocupada puede quedar en un estado marcado así.
   requires_vacant    INTEGER NOT NULL DEFAULT 0,
+  -- Estado al que pasa la habitación cuando se termina de limpiarla. Depende
+  -- de dónde venga: una "Ocupado sucio" queda "Ocupado limpio" y una "Salida"
+  -- queda "Disponible limpio". Sin esto, "Limpieza terminada" tendría que
+  -- apuntar a un único destino y mentir en la mitad de los casos.
+  clean_status_id    INTEGER REFERENCES room_statuses(id),
   sort_order         INTEGER NOT NULL DEFAULT 0,
   is_system          INTEGER NOT NULL DEFAULT 0,
   active             INTEGER NOT NULL DEFAULT 1
 );
 
--- Catálogo de OCUPACIÓN: ¿hay huésped en la habitación?
+-- Catálogo de OCUPACIÓN. EN DESUSO.
 --
--- Es un eje aparte del estado, no otro estado más. Una habitación puede estar
--- "En limpieza" con el huésped en casa (se queda otra noche) o "En limpieza"
--- porque el huésped ya se fue: la camarista necesita distinguirlas y el
--- estado, por sí solo, no lo dice. Multiplicar estados (limpia-ocupada,
--- limpia-vacante…) haría ilegible el catálogo; dos ejes lo dicen todo.
+-- Fue un segundo eje de la habitación mientras el CDH no hablaba con el PMS.
+-- Los estados del hotel ya dicen si hay huésped (Ocupado limpio, Ocupado
+-- sucio, Salida), así que el eje sobraba; lo que hacía falta de verdad —si el
+-- huésped estará dentro cuando suba Mantenimiento o Sistemas— es ahora un dato
+-- del reporte (movements.guest_present), no un estado.
+--
+-- La tabla NO se elimina: los movimientos ya registrados apuntan a sus filas y
+-- el historial es inmutable. Sus filas quedan dadas de baja (active = 0).
 CREATE TABLE IF NOT EXISTS room_occupancies (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   code              TEXT NOT NULL UNIQUE,
@@ -226,8 +234,15 @@ CREATE TABLE IF NOT EXISTS movement_types (
   name              TEXT NOT NULL,
   category_id       INTEGER REFERENCES categories(id),
   target_status_id  INTEGER REFERENCES room_statuses(id),
-  -- Ocupación a la que lleva la acción (entrada de huésped, salida, no molestar).
+  -- Ocupación a la que lleva la acción. En desuso: la ocupación dejó de ser un
+  -- eje de la habitación (ver room_occupancies).
   target_occupancy_id INTEGER REFERENCES room_occupancies(id),
+  -- 1 = la acción lleva al destino que marque `clean_status_id` del estado
+  -- ACTUAL de la habitación, en lugar de a un estado fijo.
+  target_from_clean   INTEGER NOT NULL DEFAULT 0,
+  -- 1 = al registrarla se pregunta si el huésped estará en la habitación. Es
+  -- lo que Mantenimiento y Sistemas necesitan saber antes de subir.
+  asks_guest_present  INTEGER NOT NULL DEFAULT 0,
   icon              TEXT NOT NULL DEFAULT 'bolt',
   severity          TEXT NOT NULL DEFAULT 'normal', -- normal|alta|critica
   is_incident       INTEGER NOT NULL DEFAULT 0,
@@ -280,6 +295,9 @@ CREATE TABLE IF NOT EXISTS movements (
   new_occupancy_id   INTEGER REFERENCES room_occupancies(id),
   old_occupancy_name TEXT,
   new_occupancy_name TEXT,
+  -- ¿Estará el huésped en la habitación? 'si' | 'no' | 'desconocido'.
+  -- Viaja con el reporte para que el área que sube sepa qué se va a encontrar.
+  guest_present      TEXT,
   comment            TEXT,                   -- POR QUÉ
   severity           TEXT NOT NULL DEFAULT 'normal',
   is_incident        INTEGER NOT NULL DEFAULT 0,
