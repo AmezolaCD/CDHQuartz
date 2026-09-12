@@ -205,13 +205,16 @@ jobs:
           export ANTES="$(cat "$RUNNER_TEMP/movimientos-antes.txt")"
           echo "Movimientos registrados con la versión anterior: $ANTES"
 
-          # 2) La simulación anuncia el plan y no escribe nada.
-          npm run upgrade --silent -- --dry-run
-          node --input-type=module -e "
-            const { one } = await import('./server/lib/db.js');
-            const n = one('SELECT COUNT(*) x FROM room_occupancies').x;
-            if (n) { console.error('::error::la simulación escribió en la base'); process.exit(1); }
-          "
+          # 2) La simulación anuncia el plan y no escribe nada. Comprobarlo
+          # mirando una tabla concreta ata el paso a los cambios de UNA versión
+          # —ya pasó: miraba el catálogo de ocupación y dejó de valer en cuanto
+          # main lo incorporó—. Dos simulaciones seguidas tienen que anunciar
+          # exactamente el mismo plan: si la primera hubiera escrito algo, la
+          # segunda encontraría menos que hacer. Eso vale para cualquier cambio.
+          npm run upgrade --silent -- --dry-run | tee "$RUNNER_TEMP/plan-1.txt"
+          npm run upgrade --silent -- --dry-run > "$RUNNER_TEMP/plan-2.txt"
+          diff "$RUNNER_TEMP/plan-1.txt" "$RUNNER_TEMP/plan-2.txt" \
+            || { echo "::error::la simulación escribió en la base: el segundo plan difiere"; exit 1; }
 
           # 3) La puesta al día de verdad; la segunda pasada no cambia nada.
           npm run upgrade --silent

@@ -359,6 +359,24 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
   });
 
+  test('mejora el nombre de una ocupación, pero no el que el hotel eligió', () => {
+    const { upgrade } = upgradeMod;
+    const nombre = () => one("SELECT name FROM room_occupancies WHERE code = 'VACANTE'").name;
+
+    // Una base que todavía trae el nombre publicado se pone al día.
+    db.prepare("UPDATE room_occupancies SET name = 'Vacante' WHERE code = 'VACANTE'").run();
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Nombre más claro'));
+    assert.equal(nombre(), 'Huésped ausente');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la condición se agota sola');
+
+    // Una que el hotel renombró se queda como está: la decisión es suya.
+    db.prepare("UPDATE room_occupancies SET name = 'Sin nadie' WHERE code = 'VACANTE'").run();
+    upgrade({ quiet: true });
+    assert.equal(nombre(), 'Sin nadie');
+    db.prepare("UPDATE room_occupancies SET name = 'Huésped ausente' WHERE code = 'VACANTE'").run();
+  });
+
   test('la simulación no escribe nada', () => {
     const { upgrade } = upgradeMod;
     db.prepare("DELETE FROM settings WHERE key = 'max_photo_mb'").run();
@@ -850,8 +868,8 @@ describe('Ocupación: ¿hay huésped en la habitación?', () => {
     // Un solo movimiento cuenta las dos cosas: no hay que cruzar dos renglones.
     assert.equal(res.movementIds.length, 1);
     const m = one('SELECT * FROM movements WHERE id = @id', { id: res.primaryId });
-    assert.equal(m.old_occupancy_name, 'Vacante');
-    assert.equal(m.new_occupancy_name, 'Ocupada');
+    assert.equal(m.old_occupancy_name, 'Huésped ausente');
+    assert.equal(m.new_occupancy_name, 'Huésped ahí');
     assert.equal(m.old_status_id, room.status_id);
     assert.equal(m.new_status_name, 'Ocupada');
   });

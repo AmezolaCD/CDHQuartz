@@ -332,7 +332,7 @@ Llaves no puede tocar campos de Sistemas, y viceversa.
 
 **La ocupación es un eje aparte del estado.** El estado dice en qué punto del
 ciclo de limpieza va la habitación; la **ocupación** dice si hay huésped
-dentro: *Vacante*, *Ocupada*, *Salida* o *No molestar*. Las dos cosas viajan en
+dentro: *Huésped ausente*, *Huésped ahí*, *Salida* o *No molestar*. Las dos cosas viajan en
 el mismo movimiento y se ven juntas en el rack, así que una habitación «En
 limpieza» ya distingue al huésped que se queda otra noche del que ya se fue.
 Registrar la entrada de un huésped saca la habitación de la venta; ninguna

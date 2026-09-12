@@ -93,10 +93,13 @@ export const ROOM_STATUSES = [
 // limpieza está la habitación; la ocupación, si hay huésped dentro. Ama de
 // Llaves necesita las dos cosas a la vez: una habitación sucia con el huésped
 // en casa y una sucia de salida se atienden distinto.
+// Los nombres dicen lo que la camarista necesita saber en el pasillo, no el
+// término de recepción: "Huésped ahí" y "Huésped ausente" no se confunden con
+// el estado de la habitación; "Ocupada" y "Vacante" sí.
 export const ROOM_OCCUPANCIES = [
-  { code:'VACANTE',     name:'Vacante',     icon:'door',   color:'#64748b', is_default:1,
-    description:'Sin huésped. Puede venderse en cuanto su estado lo permita.' },
-  { code:'OCUPADA',     name:'Ocupada',     icon:'user',   color:'#2563eb', counts_occupied:1,
+  { code:'VACANTE',     name:'Huésped ausente', icon:'door', color:'#64748b', is_default:1,
+    description:'No hay huésped. Puede venderse en cuanto su estado lo permita.' },
+  { code:'OCUPADA',     name:'Huésped ahí', icon:'user',   color:'#2563eb', counts_occupied:1,
     target_status:'OCUPADA',
     description:'Hay huésped en casa. La habitación no puede quedar a la venta.' },
   { code:'SALIDA',      name:'Salida',      icon:'logout', color:'#d97706',

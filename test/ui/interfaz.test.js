@@ -343,7 +343,7 @@ describe('Recorrido de operación', () => {
 
     const tarjeta = page.locator('.room:not(.inactive)').nth(10);
     const numero = (await tarjeta.locator('.num').textContent()).trim();
-    assert.match(await tarjeta.locator('.flag.occ').textContent(), /Vacante/,
+    assert.match(await tarjeta.locator('.occ').textContent(), /Huésped ausente/,
       'el rack dice si hay huésped, aunque no lo haya');
 
     await tarjeta.click();
@@ -356,8 +356,12 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
     await page.waitForTimeout(1200);
 
+    // Dos ejes, dos etiquetas: el estado dice "Ocupada" y la ocupación dice
+    // quién está dentro. Que aparezcan las dos es justo lo que se comprueba.
     const chips = await page.locator('.drawer .chip').allTextContents();
-    assert.ok(chips.some((c) => /Ocupada/.test(c)), `la habitación ${numero} quedó con ${chips.join(' | ')}`);
+    const resumen = `la habitación ${numero} quedó con ${chips.join(' | ')}`;
+    assert.ok(chips.some((c) => /Huésped ahí/.test(c)), resumen);
+    assert.ok(chips.some((c) => /^\s*Ocupada\s*$/.test(c)), resumen);
 
     // Con huésped dentro no se vende: el servidor lo rechaza y lo explica.
     await page.locator('.drawer [data-tab="accion"]').click();
@@ -372,7 +376,35 @@ describe('Recorrido de operación', () => {
     await page.waitForTimeout(600);
     const enRack = page.locator('.room', { hasText: numero }).first();
     assert.equal(await enRack.getAttribute('data-occupied'), '1');
-    assert.match(await enRack.locator('.flag.occ').textContent(), /Ocupada/);
+    assert.match(await enRack.locator('.occ').textContent(), /Huésped ahí/);
+    await page.close();
+  });
+
+  test('ninguna etiqueta de ocupación se recorta en la tarjeta', async () => {
+    // `textContent` devuelve el texto completo aunque la tarjeta lo esté
+    // cortando en pantalla, así que una prueba que sólo lo compare no ve el
+    // recorte. "Huésped ahí" y "Huésped ausente" se distinguen por la última
+    // palabra: si se corta, las dos se leen igual.
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.waitForTimeout(500);
+
+    const cortadas = await page.evaluate(() => [...document.querySelectorAll('.room')]
+      .map((tarjeta) => {
+        const occ = tarjeta.querySelector('.occ');
+        if (!occ) return { numero: tarjeta.querySelector('.num')?.textContent, motivo: 'sin etiqueta' };
+        const caja = tarjeta.getBoundingClientRect();
+        const suya = occ.getBoundingClientRect();
+        if (occ.scrollWidth > occ.clientWidth + 1) return { numero: occ.textContent.trim(), motivo: 'texto recortado' };
+        if (suya.right > caja.right + 1 || suya.bottom > caja.bottom + 1) {
+          return { numero: occ.textContent.trim(), motivo: 'se sale de la tarjeta' };
+        }
+        return null;
+      })
+      .filter(Boolean));
+
+    assert.deepEqual(cortadas, [], 'toda habitación debe mostrar su ocupación completa');
     await page.close();
   });
 
@@ -393,7 +425,7 @@ describe('Recorrido de operación', () => {
     assert.match(await page.locator('.toast.ok').textContent(), /2 habitaciones actualizadas/);
 
     await page.waitForTimeout(800);
-    assert.match(await habitaciones.nth(5).locator('.flag.occ').textContent(), /Salida/);
+    assert.match(await habitaciones.nth(5).locator('.occ').textContent(), /Salida/);
     await page.close();
   });
 
