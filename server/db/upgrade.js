@@ -29,6 +29,24 @@ const RENOMBRES = [
   // pasillo lo que hace falta saber es si hay alguien dentro.
   { tabla: 'room_occupancies', code: 'VACANTE', de: 'Vacante', a: 'Huésped ausente' },
   { tabla: 'room_occupancies', code: 'OCUPADA', de: 'Ocupada', a: 'Huésped ahí' },
+  // El estado dejó de llamarse como la etiqueta de ocupación: "En casa" es la
+  // habitación durante la estancia —limpia, en servicio y fuera de la venta—
+  // y quién está dentro lo dice la ocupación.
+  { tabla: 'room_statuses', code: 'OCUPADA', de: 'Ocupada', a: 'En casa' },
+];
+
+/**
+ * Entradas del catálogo que el CDH deja de usar. Nunca se borran —el historial
+ * las referencia y es inmutable—: se dan de baja lógica, y sólo bajo tres
+ * condiciones que la hacen segura y reversible desde Administración.
+ */
+const RETIRADOS = [
+  {
+    tabla: 'room_statuses',
+    code: 'VACIA',
+    de: 'Vacía',
+    porque: 'la ocupación "Huésped ausente" dice lo mismo sin mezclarse con el ciclo de limpieza',
+  },
 ];
 
 function parseArgs(argv) {
@@ -63,6 +81,9 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
 
   const acciones = [];
   const anotar = (grupo, detalle) => acciones.push({ grupo, detalle });
+  // Un aviso NO es un cambio: se cuenta aparte para que una advertencia que
+  // se repite en cada pasada no impida que la base se declare al día.
+  const avisos = [];
 
   const aplicar = transaction(() => {
     const idPor = (tabla, code) => one(`SELECT id FROM ${tabla} WHERE code = @code`, { code })?.id ?? null;
@@ -158,6 +179,26 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       if (!fila || fila.name !== r.de) continue;
       db.prepare(`UPDATE ${r.tabla} SET name = @a WHERE id = @id`).run({ a: r.a, id: fila.id });
       anotar('Nombre más claro', `${r.de} → ${r.a}`);
+    }
+
+    // ------------------------------------------------ Bajas del catálogo
+    // Se retira una entrada sólo si: sigue activa, conserva el nombre con el
+    // que se publicó —si el hotel la renombró, la está usando para otra cosa—
+    // y ninguna habitación está en ella. Con una sola habitación dentro se
+    // deja como está y se dice: dar de baja un estado en uso lo escondería de
+    // los catálogos sin sacar a la habitación de él.
+    for (const r of RETIRADOS) {
+      const fila = one(`SELECT id, name, active FROM ${r.tabla} WHERE code = @code`, { code: r.code });
+      if (!fila || !fila.active || fila.name !== r.de) continue;
+      const enUso = one('SELECT COUNT(*) AS n FROM rooms WHERE status_id = @id', { id: fila.id }).n;
+      if (enUso) {
+        avisos.push(`"${r.de}" no se retira: ${
+          enUso === 1 ? 'hay 1 habitación' : `hay ${enUso} habitaciones`
+        } en ese estado. Muévalas y vuelva a ejecutar la puesta al día.`);
+        continue;
+      }
+      db.prepare(`UPDATE ${r.tabla} SET active = 0 WHERE id = @id`).run({ id: fila.id });
+      anotar('Retirado del catálogo', `${r.de} — ${r.porque}`);
     }
 
     // -------------------------------------------------- Tipos de habitación
@@ -307,6 +348,8 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
     if (!(err instanceof SimulacionTerminada)) throw err;
     // La transacción se revirtió: nada quedó escrito.
   }
+
+  for (const a of avisos) log(`[upgrade] Aviso: ${a}`);
 
   const verbo = dryRun ? 'Se aplicarían' : 'Aplicados';
   if (!acciones.length) {

@@ -356,12 +356,14 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
     await page.waitForTimeout(1200);
 
-    // Dos ejes, dos etiquetas: el estado dice "Ocupada" y la ocupación dice
-    // quién está dentro. Que aparezcan las dos es justo lo que se comprueba.
+    // Dos ejes, dos etiquetas: el estado dice "En casa" —la habitación durante
+    // la estancia— y la ocupación dice quién está dentro. Que aparezcan las dos
+    // sin repetir la misma palabra es justo lo que se comprueba.
     const chips = await page.locator('.drawer .chip').allTextContents();
     const resumen = `la habitación ${numero} quedó con ${chips.join(' | ')}`;
     assert.ok(chips.some((c) => /Huésped ahí/.test(c)), resumen);
-    assert.ok(chips.some((c) => /^\s*Ocupada\s*$/.test(c)), resumen);
+    assert.ok(chips.some((c) => /En casa/.test(c)), resumen);
+    assert.ok(!chips.some((c) => /Ocupada/.test(c)), `"Ocupada" ya no debe aparecer: ${resumen}`);
 
     // Con huésped dentro no se vende: el servidor lo rechaza y lo explica.
     await page.locator('.drawer [data-tab="accion"]').click();
