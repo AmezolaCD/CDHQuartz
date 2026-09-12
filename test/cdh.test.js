@@ -377,6 +377,51 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     db.prepare("UPDATE room_occupancies SET name = 'Huésped ausente' WHERE code = 'VACANTE'").run();
   });
 
+  test('retira "Vacía" del catálogo, pero no si alguna habitación está en él', () => {
+    const { upgrade } = upgradeMod;
+    const vacia = () => one("SELECT id, name, active FROM room_statuses WHERE code = 'VACIA'");
+
+    // Una base nueva ya no lo trae; se recrea el estado tal como lo tiene una
+    // base anterior —activo y sin usar— para recorrer la baja de verdad.
+    if (!vacia()) {
+      db.prepare(`INSERT INTO room_statuses (code, name, icon, color, counts_pending, sort_order, is_system, active)
+                  VALUES ('VACIA', 'Vacía', 'door', '#64748b', 1, 3, 1, 1)`).run();
+    }
+    db.prepare("UPDATE room_statuses SET name = 'Vacía', active = 1 WHERE code = 'VACIA'").run();
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Retirado del catálogo'));
+    assert.equal(vacia().active, 0);
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+
+    // Con una habitación dentro NO se retira: esconderla del catálogo sin
+    // sacar antes a la habitación dejaría un estado invisible en uso.
+    const room = getRoomByNumber('306');
+    const antes = room.status_id;
+    db.prepare("UPDATE room_statuses SET active = 1 WHERE code = 'VACIA'").run();
+    db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: vacia().id, id: room.id });
+
+    assert.equal(upgrade({ quiet: true }).length, 0, 'un aviso no es un cambio');
+    assert.equal(vacia().active, 1, 'sigue activa mientras esté en uso');
+
+    // Liberada la habitación, la siguiente pasada sí la retira.
+    db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: antes, id: room.id });
+    upgrade({ quiet: true });
+    assert.equal(vacia().active, 0);
+  });
+
+  test('el estado "Ocupada" pasa a llamarse "En casa"', () => {
+    const { upgrade } = upgradeMod;
+    const nombre = () => one("SELECT name FROM room_statuses WHERE code = 'OCUPADA'").name;
+    db.prepare("UPDATE room_statuses SET name = 'Ocupada' WHERE code = 'OCUPADA'").run();
+    upgrade({ quiet: true });
+    assert.equal(nombre(), 'En casa');
+    // El código no cambia: es lo que enlaza la ocupación con su estado destino.
+    assert.equal(
+      one(`SELECT s.code FROM room_occupancies o
+             JOIN room_statuses s ON s.id = o.target_status_id
+            WHERE o.code = 'OCUPADA'`).code, 'OCUPADA');
+  });
+
   test('la simulación no escribe nada', () => {
     const { upgrade } = upgradeMod;
     db.prepare("DELETE FROM settings WHERE key = 'max_photo_mb'").run();
@@ -871,7 +916,7 @@ describe('Ocupación: ¿hay huésped en la habitación?', () => {
     assert.equal(m.old_occupancy_name, 'Huésped ausente');
     assert.equal(m.new_occupancy_name, 'Huésped ahí');
     assert.equal(m.old_status_id, room.status_id);
-    assert.equal(m.new_status_name, 'Ocupada');
+    assert.equal(m.new_status_name, 'En casa');
   });
 
   test('una habitación ocupada no puede quedar disponible', () => {

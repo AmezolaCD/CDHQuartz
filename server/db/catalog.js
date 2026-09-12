@@ -74,8 +74,10 @@ export const ROLES = [
 // en la lista sin tocar una sola línea de código.
 export const ROOM_STATUSES = [
   { code:'DISPONIBLE',           name:'Disponible',            icon:'check-circle', color:'#16a34a', counts_ready:1, requires_vacant:1 },
-  { code:'OCUPADA',              name:'Ocupada',               icon:'user',         color:'#2563eb' },
-  { code:'VACIA',                name:'Vacía',                 icon:'door',         color:'#64748b', counts_pending:1 },
+  // "En casa" es el estado de una habitación durante la estancia: limpia, en
+  // servicio y fuera de la venta. No se llama "Ocupada" para no competir con
+  // la etiqueta de ocupación, que es la que dice si hay huésped dentro.
+  { code:'OCUPADA',              name:'En casa',               icon:'user',         color:'#2563eb' },
   { code:'EN_LIMPIEZA',          name:'En limpieza',           icon:'spray',        color:'#0891b2', counts_cleaning:1 },
   { code:'LIMPIEZA_TERMINADA',   name:'Limpieza terminada',    icon:'sparkles',     color:'#06b6d4', counts_pending:1 },
   { code:'INSPECCION_PENDIENTE', name:'Inspección pendiente',  icon:'clipboard',    color:'#d97706', counts_pending:1, counts_attention:1, attention_weight:2 },
