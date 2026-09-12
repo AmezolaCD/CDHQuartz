@@ -225,23 +225,38 @@ jobs:
             *) echo "::error::la segunda pasada no es idempotente"; exit 1 ;;
           esac
 
-          # 4) El historial no se tocó y la operación sigue funcionando.
+          # 4) El historial no se tocó, ninguna habitación quedó en un estado
+          # retirado y la operación sigue viva. Son invariantes que valen para
+          # cualquier versión: comprobar aquí algo propio de UNA —una columna,
+          # un código de acción— envejece y da un rojo falso a la siguiente.
           node --input-type=module -e "
             const { one } = await import('./server/lib/db.js');
             const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
             const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
             const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
             const fallo = (m) => { console.error('::error::' + m); process.exit(1); };
+
             if (one('SELECT COUNT(*) n FROM movements').n !== Number(process.env.ANTES)) {
               fallo('el historial cambió durante la puesta al día');
             }
-            if (one('SELECT COUNT(*) n FROM rooms WHERE occupancy_id IS NULL').n) {
-              fallo('quedaron habitaciones sin ocupación');
-            }
-            const rec = withPermissions(findUserByUsername('recepcion'));
-            const r = recordMovement({ roomId: getRoomByNumber('403').id, user: rec, movementTypeCode: 'CHECK_IN' });
-            console.log('403 tras el check-in:', r.room.occupancy_name, '/', r.room.status_name);
-            if (r.room.occupancy_code !== 'OCUPADA') fallo('la operación no funciona tras actualizar');
+            const huerfanas = one(\`
+              SELECT COUNT(*) AS n FROM rooms r
+                JOIN room_statuses s ON s.id = r.status_id
+               WHERE r.active = 1 AND s.active = 0\`).n;
+            if (huerfanas) fallo(huerfanas + ' habitaciones quedaron en un estado retirado');
+
+            // Un cambio de estado a un estado vigente, elegido del catálogo:
+            // así la prueba no nombra un código que mañana puede no existir.
+            const destino = one(\`
+              SELECT code FROM room_statuses
+               WHERE active = 1 AND code <> (SELECT s.code FROM rooms r
+                 JOIN room_statuses s ON s.id = r.status_id WHERE r.number = '403')
+               ORDER BY sort_order LIMIT 1\`);
+            const sup = withPermissions(findUserByUsername('supervisor'));
+            const r = recordMovement({ roomId: getRoomByNumber('403').id, user: sup,
+              statusCode: destino.code, comment: 'Prueba de operación tras actualizar.' });
+            console.log('403 tras actualizar:', r.room.status_name);
+            if (!r.statusChanged) fallo('la operación no funciona tras actualizar');
           "
           echo "Actualización correcta sobre una base en uso."
 
