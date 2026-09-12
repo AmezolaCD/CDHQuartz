@@ -87,6 +87,12 @@ const COLUMNAS_NUEVAS = [
   { table: 'movements', column: 'new_occupancy_id',   ddl: 'INTEGER REFERENCES room_occupancies(id)' },
   { table: 'movements', column: 'old_occupancy_name', ddl: 'TEXT' },
   { table: 'movements', column: 'new_occupancy_name', ddl: 'TEXT' },
+  // El dato del reporte que sustituyó al eje de ocupación: si el huésped
+  // estará en la habitación cuando suba el área responsable.
+  { table: 'movements', column: 'guest_present', ddl: 'TEXT' },
+  { table: 'movement_types', column: 'target_from_clean', ddl: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'movement_types', column: 'asks_guest_present', ddl: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'room_statuses', column: 'clean_status_id', ddl: 'INTEGER REFERENCES room_statuses(id)' },
   {
     table: 'room_statuses',
     column: 'attention_weight',

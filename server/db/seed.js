@@ -3,7 +3,7 @@ import { db, migrate, insert, one, transaction } from '../lib/db.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { stamp, setTimezone } from '../lib/time.js';
 import {
-  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_OCCUPANCIES, ROOM_TYPES,
+  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
   CATEGORIES, MOVEMENT_TYPES, FLOOR_MAP, SETTINGS,
 } from './catalog.js';
 
@@ -50,20 +50,16 @@ export function seed({ quiet = false } = {}) {
 
     const status = {};
     ROOM_STATUSES.forEach((s, i) => {
-      status[s.code] = insert('room_statuses', { ...s, sort_order: i + 1, is_system: 1 });
+      const { clean_status, ...row } = s;
+      status[s.code] = insert('room_statuses', { ...row, sort_order: i + 1, is_system: 1 });
     });
-
-    // La ocupación se siembra después de los estados: apunta a uno de ellos.
-    const occ = {};
-    ROOM_OCCUPANCIES.forEach((o, i) => {
-      const { target_status, ...row } = o;
-      occ[o.code] = insert('room_occupancies', {
-        ...row,
-        target_status_id: target_status ? status[target_status] : null,
-        sort_order: i + 1,
-        is_system: 1,
-      });
-    });
+    // El estado al que lleva la limpieza se enlaza después: apunta a otro
+    // estado de la misma tabla, que puede no existir todavía en la vuelta.
+    for (const s of ROOM_STATUSES) {
+      if (!s.clean_status) continue;
+      db.prepare('UPDATE room_statuses SET clean_status_id = @destino WHERE id = @id')
+        .run({ destino: status[s.clean_status], id: status[s.code] });
+    }
 
     const rtype = {};
     for (const rt of ROOM_TYPES) rtype[rt.code] = insert('room_types', rt);
@@ -91,12 +87,11 @@ export function seed({ quiet = false } = {}) {
     }
 
     for (const m of MOVEMENT_TYPES) {
-      const { category, target_status, target_occupancy, ...row } = m;
+      const { category, target_status, ...row } = m;
       insert('movement_types', {
         ...row,
         category_id: category ? cat[category] : null,
         target_status_id: target_status ? status[target_status] : null,
-        target_occupancy_id: target_occupancy ? occ[target_occupancy] : null,
       });
     }
 
@@ -119,8 +114,7 @@ export function seed({ quiet = false } = {}) {
     }
 
     // -------------------------- Pisos y habitaciones (distribución real) ----
-    const defaultStatus = status.DISPONIBLE;
-    const defaultOccupancy = occ.VACANTE;
+    const defaultStatus = status.DISPONIBLE_LIMPIO;
     const fieldRows = db.prepare('SELECT id, default_value FROM fields').all();
     let roomCount = 0;
 
@@ -135,11 +129,9 @@ export function seed({ quiet = false } = {}) {
           floor_id: floorId,
           room_type_id: null,
           status_id: defaultStatus,
-          occupancy_id: defaultOccupancy,
           grid_row: f.number,
           grid_col: col + 1,
           status_changed_at: t.iso,
-          occupancy_changed_at: t.iso,
           updated_at: t.iso,
           created_at: t.iso,
         });

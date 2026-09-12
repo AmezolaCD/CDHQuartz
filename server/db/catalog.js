@@ -17,7 +17,6 @@ export const PERMISSIONS = [
   { code: 'room.view',        grp: 'Habitaciones', name: 'Ver habitaciones' },
   { code: 'room.edit',        grp: 'Habitaciones', name: 'Editar detalles de habitación' },
   { code: 'room.status',      grp: 'Habitaciones', name: 'Cambiar estado de habitación' },
-  { code: 'room.occupancy',   grp: 'Habitaciones', name: 'Registrar ocupación (entrada y salida de huésped)' },
   { code: 'movement.create',  grp: 'Habitaciones', name: 'Crear movimientos' },
   { code: 'history.view',     grp: 'Habitaciones', name: 'Ver historial' },
   { code: 'photo.upload',     grp: 'Habitaciones', name: 'Adjuntar fotografías' },
@@ -32,7 +31,7 @@ export const PERMISSIONS = [
   { code: 'admin.settings',   grp: 'Administración', name: 'Administrar configuraciones' },
 ];
 
-const OPERATIVO = ['room.view','room.edit','room.status','room.occupancy','movement.create','history.view','photo.upload','report.view'];
+const OPERATIVO = ['room.view','room.edit','room.status','movement.create','history.view','photo.upload','report.view'];
 
 export const ROLES = [
   { code: 'ADMIN', name: 'Administrador', department_scope: 0, is_system: 1,
@@ -61,54 +60,40 @@ export const ROLES = [
 
   { code: 'RECEPCION', name: 'Recepción', department_scope: 1, is_system: 1,
     description: 'Consulta habitaciones y registra observaciones autorizadas.',
-    permissions: ['room.view','room.occupancy','movement.create','history.view','photo.upload','report.view'] },
+    permissions: ['room.view','room.status','movement.create','history.view','photo.upload','report.view'] },
 
   { code: 'OTROS', name: 'Otros', department_scope: 1, is_system: 0,
     description: 'Consulta básica.',
     permissions: ['room.view','history.view'] },
 ];
 
-// `counts_attention` decide si el estado entra en "Requiere atención";
-// `attention_weight` decide qué tan arriba aparece (bloqueo > trabajo
-// pendiente > inspección). Un estado nuevo con counts_attention = 1 aparece
-// en la lista sin tocar una sola línea de código.
+// Los estados son los que maneja Arpón, el PMS del hotel, con sus mismos
+// nombres: el rack del CDH y la pantalla de Ama de Llaves de Arpón tienen que
+// poder leerse una junto a la otra sin traducir nada.
+//
+// `counts_attention` decide si el estado entra en "Requiere atención" y
+// `attention_weight` qué tan arriba aparece. `clean_status` dice a dónde pasa
+// la habitación al terminar de limpiarla, que no es el mismo sitio si el
+// huésped se queda que si ya se fue.
 export const ROOM_STATUSES = [
-  { code:'DISPONIBLE',           name:'Disponible',            icon:'check-circle', color:'#16a34a', counts_ready:1, requires_vacant:1 },
-  // "En casa" es el estado de una habitación durante la estancia: limpia, en
-  // servicio y fuera de la venta. No se llama "Ocupada" para no competir con
-  // la etiqueta de ocupación, que es la que dice si hay huésped dentro.
-  { code:'OCUPADA',              name:'En casa',               icon:'user',         color:'#2563eb' },
-  { code:'EN_LIMPIEZA',          name:'En limpieza',           icon:'spray',        color:'#0891b2', counts_cleaning:1 },
-  { code:'LIMPIEZA_TERMINADA',   name:'Limpieza terminada',    icon:'sparkles',     color:'#06b6d4', counts_pending:1 },
-  { code:'INSPECCION_PENDIENTE', name:'Inspección pendiente',  icon:'clipboard',    color:'#d97706', counts_pending:1, counts_attention:1, attention_weight:2 },
-  { code:'INSPECCIONADA',        name:'Inspeccionada',         icon:'shield-check', color:'#15803d', counts_ready:1 },
-  { code:'MANT_PENDIENTE',       name:'Mantenimiento pendiente',icon:'wrench',      color:'#f59e0b', counts_maintenance:1, counts_pending:1, counts_attention:1, attention_weight:3 },
-  { code:'EN_MANTENIMIENTO',     name:'En mantenimiento',      icon:'tool',         color:'#ea580c', counts_maintenance:1 },
-  { code:'SIS_PENDIENTE',        name:'Sistemas pendiente',    icon:'wifi',         color:'#0284c7', counts_pending:1, counts_attention:1, attention_weight:3 },
-  { code:'EN_SISTEMAS',          name:'En atención de Sistemas', icon:'wifi',       color:'#0369a1' },
-  { code:'FUERA_SERVICIO',       name:'Fuera de servicio',     icon:'ban',          color:'#b91c1c', counts_blocked:1, counts_attention:1, attention_weight:4 },
-  { code:'BLOQUEADA',            name:'Bloqueada',             icon:'lock',         color:'#7f1d1d', counts_blocked:1, counts_attention:1, attention_weight:4 },
-  { code:'REQUIERE_ATENCION',    name:'Requiere atención',     icon:'alert',        color:'#dc2626', counts_attention:1, counts_pending:1, attention_weight:4 },
-];
-
-// La OCUPACIÓN va aparte del estado. El estado dice en qué punto del ciclo de
-// limpieza está la habitación; la ocupación, si hay huésped dentro. Ama de
-// Llaves necesita las dos cosas a la vez: una habitación sucia con el huésped
-// en casa y una sucia de salida se atienden distinto.
-// Los nombres dicen lo que la camarista necesita saber en el pasillo, no el
-// término de recepción: "Huésped ahí" y "Huésped ausente" no se confunden con
-// el estado de la habitación; "Ocupada" y "Vacante" sí.
-export const ROOM_OCCUPANCIES = [
-  { code:'VACANTE',     name:'Huésped ausente', icon:'door', color:'#64748b', is_default:1,
-    description:'No hay huésped. Puede venderse en cuanto su estado lo permita.' },
-  { code:'OCUPADA',     name:'Huésped ahí', icon:'user',   color:'#2563eb', counts_occupied:1,
-    target_status:'OCUPADA',
-    description:'Hay huésped en casa. La habitación no puede quedar a la venta.' },
-  { code:'SALIDA',      name:'Salida',      icon:'logout', color:'#d97706',
-    description:'El huésped ya se fue; la habitación espera limpieza de salida.' },
-  { code:'NO_MOLESTAR', name:'No molestar', icon:'ban',    color:'#7c3aed', counts_occupied:1, do_not_disturb:1,
-    target_status:'OCUPADA',
-    description:'Hay huésped y pidió no ser molestado: no se entra a la habitación.' },
+  { code:'DISPONIBLE_LIMPIO', name:'Disponible limpio', icon:'check-circle', color:'#16a34a', counts_ready:1,
+    description:'Sin huésped, aseada y lista para venderse.' },
+  { code:'ENTRADA_NUEVA',     name:'Entrada nueva',     icon:'door',         color:'#0891b2',
+    description:'Preparada para el huésped que llega.' },
+  { code:'OCUPADO_LIMPIO',    name:'Ocupado limpio',    icon:'user',         color:'#2563eb',
+    description:'Con huésped y ya atendida.' },
+  { code:'OCUPADO_SUCIO',     name:'Ocupado sucio',     icon:'spray',        color:'#d97706',
+    counts_cleaning:1, counts_pending:1, clean_status:'OCUPADO_LIMPIO',
+    description:'Con huésped, pendiente de limpieza.' },
+  { code:'SALIDA',            name:'Salida',            icon:'logout',       color:'#f59e0b',
+    counts_cleaning:1, counts_pending:1, clean_status:'DISPONIBLE_LIMPIO',
+    description:'El huésped se fue; pendiente de limpieza de salida.' },
+  { code:'DISCREPANCIA',      name:'Discrepancia',      icon:'alert',        color:'#dc2626',
+    counts_attention:1, counts_pending:1, attention_weight:4,
+    description:'Lo que ve Ama de Llaves no coincide con lo que dice Recepción.' },
+  { code:'FUERA_SERVICIO',    name:'Fuera de servicio', icon:'ban',          color:'#b91c1c',
+    counts_blocked:1, counts_attention:1, attention_weight:4,
+    description:'No se puede vender: tiene una falla que lo impide.' },
 ];
 
 const EST_MTTO   = ['OK','Requiere revisión','Falla','Fuera de servicio'];
@@ -127,7 +112,7 @@ export const CATEGORIES = [
     { code:'objetos_encontrados', label:'Objetos encontrados', type:'text' },
     { code:'observaciones_ama',   label:'Observaciones',       type:'textarea' },
   ]},
-  { code:'MTTO', name:'Mantenimiento', department:'MTTO', icon:'wrench', color:'#ea580c', sort_order:2, blocks_release:1, pending_status:'MANT_PENDIENTE', fields:[
+  { code:'MTTO', name:'Mantenimiento', department:'MTTO', icon:'wrench', color:'#ea580c', sort_order:2, blocks_release:1, pending_status:'FUERA_SERVICIO', fields:[
     { code:'electricidad', label:'Electricidad', type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'plomeria',     label:'Plomería',     type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'hvac',         label:'HVAC (clima)', type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
@@ -136,7 +121,7 @@ export const CATEGORIES = [
     { code:'cerraduras',   label:'Cerraduras',   type:'select', options:EST_MTTO, default_value:'OK', is_incident_when:INC_MTTO },
     { code:'otros_mtto',   label:'Otros (mantenimiento)', type:'textarea' },
   ]},
-  { code:'SIS', name:'Sistemas', department:'SIS', icon:'wifi', color:'#0284c7', sort_order:3, blocks_release:1, pending_status:'SIS_PENDIENTE', fields:[
+  { code:'SIS', name:'Sistemas', department:'SIS', icon:'wifi', color:'#0284c7', sort_order:3, blocks_release:1, pending_status:'FUERA_SERVICIO', fields:[
     { code:'telefono',     label:'Teléfono',     type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
     { code:'tv',           label:'TV',           type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
     { code:'wifi',         label:'WiFi',         type:'select', options:EST_SIS, default_value:'OK', is_incident_when:INC_SIS },
@@ -153,29 +138,31 @@ export const CATEGORIES = [
 ];
 
 // Acciones rápidas: cada una genera automáticamente un movimiento auditable.
+//
+// `asks_guest_present` marca las que preguntan si el huésped estará en la
+// habitación. Es lo que Mantenimiento y Sistemas necesitan saber antes de
+// subir, y por eso viaja con el reporte en vez de ser un estado aparte.
+//
+// Los reportes NO mueven el estado: el estado lo manda Ama de Llaves y refleja
+// el ciclo de limpieza del PMS. Un reporte abierto ya impide por sí solo que
+// la habitación quede disponible, así que no hace falta un estado para eso.
 export const MOVEMENT_TYPES = [
-  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:'LIMPIEZA_TERMINADA',  icon:'sparkles',     is_quick_action:1, sort_order:1 },
-  { code:'CLEAN_START', name:'Iniciar limpieza',        category:'AMA',  target_status:'EN_LIMPIEZA',         icon:'spray',        is_quick_action:0, sort_order:2 },
-  { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:'INSPECCIONADA',       icon:'clipboard',    is_quick_action:1, sort_order:3 },
-  { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:'MANT_PENDIENTE',      icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, sort_order:4 },
-  { code:'MAINT_START', name:'Iniciar mantenimiento',   category:'MTTO', target_status:'EN_MANTENIMIENTO',    icon:'tool',         is_quick_action:0, sort_order:5 },
-  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:'INSPECCION_PENDIENTE',icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
-  { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:'SIS_PENDIENTE',       icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, sort_order:7 },
-  { code:'SYS_START',   name:'Iniciar atención de Sistemas', category:'SIS', target_status:'EN_SISTEMAS',    icon:'tool',         is_quick_action:0, sort_order:8 },
-  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:'INSPECCION_PENDIENTE',icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:9 },
-  { code:'BLOCK',       name:'Bloquear habitación',     category:'OTROS',target_status:'BLOQUEADA',           icon:'lock',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, sort_order:10 },
-  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE',          icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:11 },
-  { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:'REQUIERE_ATENCION',   icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, sort_order:12 },
+  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:null, target_from_clean:1, icon:'sparkles', is_quick_action:1, sort_order:1 },
+  { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:null,                  icon:'clipboard',    is_quick_action:1, sort_order:2 },
+  { code:'GUEST_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:'SALIDA',              icon:'logout',       is_quick_action:1, sort_order:3 },
+  { code:'GUEST_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:'OCUPADO_LIMPIO',      icon:'user',         is_quick_action:1, sort_order:4 },
+  { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:null,                  icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:5 },
+  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
+  { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:null,                  icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:7 },
+  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:8 },
+  { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:null,                  icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, asks_guest_present:1, sort_order:9 },
+  { code:'DISCREPANCY', name:'Reportar discrepancia',   category:'AMA',  target_status:'DISCREPANCIA',        icon:'alert',        is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:10 },
+  { code:'OUT_OF_SERVICE', name:'Marcar fuera de servicio', category:'MTTO', target_status:'FUERA_SERVICIO',  icon:'ban',          is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:11 },
+  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE_LIMPIO',   icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:12 },
   { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, sort_order:13 },
   { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, sort_order:14 },
-  { code:'OUT_OF_SERVICE', name:'Marcar fuera de servicio', category:'MTTO', target_status:'FUERA_SERVICIO',  icon:'ban',          is_quick_action:0, is_incident:1, severity:'critica', requires_comment:1, notify:1, sort_order:15 },
-  { code:'CHECK_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:null,  target_occupancy:'OCUPADA',     icon:'user',   is_quick_action:1, sort_order:16 },
-  { code:'CHECK_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:null,  target_occupancy:'SALIDA',      icon:'logout', is_quick_action:1, sort_order:17 },
-  { code:'DND_ON',      name:'Marcar no molestar',      category:'OTROS',target_status:null,  target_occupancy:'NO_MOLESTAR', icon:'ban',    is_quick_action:1, sort_order:18 },
-  { code:'DND_OFF',     name:'Quitar no molestar',      category:'OTROS',target_status:null,  target_occupancy:'OCUPADA',     icon:'user',   is_quick_action:1, sort_order:19 },
   { code:'STATUS_CHANGE', name:'Cambio de estado',      category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:20 },
   { code:'DETAIL_UPDATE', name:'Actualización de detalle', category:null,target_status:null,                  icon:'edit',         is_quick_action:0, is_system:1, sort_order:21 },
-  { code:'OCCUPANCY_CHANGE', name:'Cambio de ocupación', category:null,  target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:22 },
 ];
 
 export const ROOM_TYPES = [

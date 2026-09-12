@@ -185,6 +185,7 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.quick button');
     await page.locator('.quick button', { hasText: 'Reportar mantenimiento' }).click();
     await page.waitForSelector('#actionForm');
+    await page.check('#actionForm [name=guestPresent][value=si]');
     await page.fill('#actionForm [name=comment]', 'Prueba automatizada de interfaz.');
     await page.locator('.modal-foot [type=submit]').click();
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
@@ -193,7 +194,9 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.tl-card');
     const linea = await page.locator('.timeline').textContent();
     assert.match(linea, /Reportar mantenimiento/);
-    assert.match(linea, /Mantenimiento pendiente/, 'el cambio de estado debe verse en el historial');
+    assert.match(linea, /Fuera de servicio/, 'el cambio de estado debe verse en el historial');
+    assert.match(linea, /El huésped estaría en la habitación/,
+      'el historial conserva lo que el reporte dijo del huésped');
     await page.close();
   });
 
@@ -221,18 +224,27 @@ describe('Recorrido de operación', () => {
 
     // En modo bloque el rack selecciona: no debe abrir el expediente.
     const habitaciones = page.locator('.room:not(.inactive)');
-    for (let i = 0; i < 3; i += 1) await habitaciones.nth(i).click();
+    for (const i of [1, 2, 3]) await habitaciones.nth(i).click();
     await page.waitForTimeout(250);
     assert.equal(await paneles(page), 0, 'seleccionar no debe abrir el expediente');
     assert.equal(await page.locator('.room.selected').count(), 3);
     assert.equal(await page.locator('.bulk-count strong').textContent(), '3');
 
-    const numeros = await habitaciones.nth(0).locator('.num').textContent();
+    const numeros = await habitaciones.nth(1).locator('.num').textContent();
+    // Una habitación se limpia cuando lo espera: se ponen "Salida" primero.
+    await page.selectOption('.bulk-form [name=accion]', 'st:SALIDA');
+    await page.locator('[data-apply]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(900);
+    for (const i of [1, 2, 3]) await habitaciones.nth(i).click();
+    await page.waitForTimeout(250);
     await page.selectOption('.bulk-form [name=accion]', 'mt:CLEAN_DONE');
     await page.fill('.bulk-form [name=comment]', 'Ronda de prueba automatizada.');
     await page.locator('[data-apply]').click();
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
-    assert.match(await page.locator('.toast.ok').textContent(), /3 habitaciones actualizadas/);
+    // Son dos avisos encadenados —el de "Salida" y el de la limpieza—: se mira
+    // el último, que es el del lote que interesa.
+    assert.match(await page.locator('.toast.ok').last().textContent(), /3 habitaciones actualizadas/);
 
     // El cambio quedó en cada expediente, no sólo en el aviso.
     await page.locator('[data-bulk]').click();
@@ -257,6 +269,7 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.quick button');
     await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
     await page.waitForSelector('#actionForm');
+    await page.check('#actionForm [name=guestPresent][value=si]');
     await page.fill('#actionForm [name=comment]', 'Televisión sin señal en el canal 5.');
     await page.locator('.modal-foot [type=submit]').click();
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
@@ -285,6 +298,7 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.quick button');
     await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
     await page.waitForSelector('#actionForm');
+    await page.check('#actionForm [name=guestPresent][value=no]');
     await page.fill('#actionForm [name=comment]', 'Caja fuerte trabada.');
     await page.locator('.modal-foot [type=submit]').click();
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
@@ -316,7 +330,7 @@ describe('Recorrido de operación', () => {
 
     const tarjeta = page.locator('.room:not(.inactive)').nth(7);
     const numero = (await tarjeta.locator('.num').textContent()).trim();
-    assert.match(await tarjeta.locator('.st').textContent(), /Disponible/);
+    assert.match(await tarjeta.locator('.st').textContent(), /Disponible limpio/);
 
     await tarjeta.click();
     await page.waitForSelector('.drawer.open');
@@ -332,61 +346,43 @@ describe('Recorrido de operación', () => {
     await page.waitForTimeout(1200);
 
     const chip = await page.locator('.drawer .chip').first().textContent();
-    assert.match(chip, /Mantenimiento pendiente/, `la habitación ${numero} quedó en "${chip.trim()}"`);
+    assert.match(chip, /Fuera de servicio/, `la habitación ${numero} quedó en "${chip.trim()}"`);
     await page.close();
   });
 
-  test('la entrada de un huésped se ve en el rack y cierra la venta', async () => {
-    const { page } = await abrirSesion();
+  test('el reporte pregunta por el huésped y no deja guardarlo sin respuesta', async () => {
+    const { page } = await abrirSesion('amadellaves');
     await page.evaluate(() => { location.hash = '#/pisos'; });
     await page.waitForSelector('.rack-grid');
-
-    const tarjeta = page.locator('.room:not(.inactive)').nth(10);
-    const numero = (await tarjeta.locator('.num').textContent()).trim();
-    assert.match(await tarjeta.locator('.occ').textContent(), /Huésped ausente/,
-      'el rack dice si hay huésped, aunque no lo haya');
-
-    await tarjeta.click();
+    await page.locator('.room:not(.inactive)').nth(10).click();
     await page.waitForSelector('.drawer.open');
     await page.locator('.drawer [data-tab="accion"]').click();
     await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Entrada de huésped' }).click();
+    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
     await page.waitForSelector('#actionForm');
+
+    // La pregunta está, y el formulario no se envía sin contestarla.
+    assert.equal(await page.locator('#actionForm [name=guestPresent]').count(), 3);
+    await page.fill('#actionForm [name=comment]', 'La TV no enciende.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForTimeout(600);
+    assert.equal(await page.locator('.toast.ok').count(), 0, 'no debe guardarse sin contestar');
+
+    await page.check('#actionForm [name=guestPresent][value=no]');
     await page.locator('.modal-foot [type=submit]').click();
     await page.waitForSelector('.toast.ok', { timeout: 10000 });
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(900);
 
-    // Dos ejes, dos etiquetas: el estado dice "En casa" —la habitación durante
-    // la estancia— y la ocupación dice quién está dentro. Que aparezcan las dos
-    // sin repetir la misma palabra es justo lo que se comprueba.
-    const chips = await page.locator('.drawer .chip').allTextContents();
-    const resumen = `la habitación ${numero} quedó con ${chips.join(' | ')}`;
-    assert.ok(chips.some((c) => /Huésped ahí/.test(c)), resumen);
-    assert.ok(chips.some((c) => /En casa/.test(c)), resumen);
-    assert.ok(!chips.some((c) => /Ocupada/.test(c)), `"Ocupada" ya no debe aparecer: ${resumen}`);
-
-    // Con huésped dentro no se vende: el servidor lo rechaza y lo explica.
-    await page.locator('.drawer [data-tab="accion"]').click();
-    await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Liberar habitación' }).click();
-    await page.waitForSelector('#actionForm');
-    await page.locator('.modal-foot [type=submit]').click();
-    await page.waitForSelector('.toast.error', { timeout: 10000 });
-    assert.match(await page.locator('.toast.error').textContent(), /salida del huésped/);
-
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(600);
-    const enRack = page.locator('.room', { hasText: numero }).first();
-    assert.equal(await enRack.getAttribute('data-occupied'), '1');
-    assert.match(await enRack.locator('.occ').textContent(), /Huésped ahí/);
+    await page.locator('.drawer [data-tab="historial"]').click();
+    await page.waitForSelector('.tl-card');
+    assert.match(await page.locator('.timeline').textContent(), /La habitación estaría libre/);
     await page.close();
   });
 
-  test('ninguna etiqueta de ocupación se recorta en la tarjeta', async () => {
-    // `textContent` devuelve el texto completo aunque la tarjeta lo esté
-    // cortando en pantalla, así que una prueba que sólo lo compare no ve el
-    // recorte. "Huésped ahí" y "Huésped ausente" se distinguen por la última
-    // palabra: si se corta, las dos se leen igual.
+  test('ningún nombre de estado se recorta en la tarjeta', async () => {
+    // `textContent` devuelve el texto completo aunque la pantalla lo esté
+    // cortando, así que una prueba que sólo lo compare no ve el recorte. Y
+    // recortados, "Ocupado limpio" y "Ocupado sucio" se leen igual.
     const { page } = await abrirSesion();
     await page.evaluate(() => { location.hash = '#/pisos'; });
     await page.waitForSelector('.rack-grid');
@@ -394,40 +390,34 @@ describe('Recorrido de operación', () => {
 
     const cortadas = await page.evaluate(() => [...document.querySelectorAll('.room')]
       .map((tarjeta) => {
-        const occ = tarjeta.querySelector('.occ');
-        if (!occ) return { numero: tarjeta.querySelector('.num')?.textContent, motivo: 'sin etiqueta' };
+        const st = tarjeta.querySelector('.st');
+        if (!st) return { texto: tarjeta.querySelector('.num')?.textContent, motivo: 'sin estado' };
         const caja = tarjeta.getBoundingClientRect();
-        const suya = occ.getBoundingClientRect();
-        if (occ.scrollWidth > occ.clientWidth + 1) return { numero: occ.textContent.trim(), motivo: 'texto recortado' };
+        const suya = st.getBoundingClientRect();
+        if (st.scrollWidth > st.clientWidth + 1) return { texto: st.textContent.trim(), motivo: 'texto recortado' };
         if (suya.right > caja.right + 1 || suya.bottom > caja.bottom + 1) {
-          return { numero: occ.textContent.trim(), motivo: 'se sale de la tarjeta' };
+          return { texto: st.textContent.trim(), motivo: 'se sale de la tarjeta' };
         }
         return null;
       })
       .filter(Boolean));
 
-    assert.deepEqual(cortadas, [], 'toda habitación debe mostrar su ocupación completa');
+    assert.deepEqual(cortadas, [], 'toda habitación debe mostrar su estado completo');
     await page.close();
   });
 
-  test('recepción marca en bloque las salidas del piso', async () => {
-    const { page } = await abrirSesion('recepcion');
+  test('un lote no puede replicar la respuesta sobre el huésped', async () => {
+    // La respuesta es de UNA habitación concreta, así que esas acciones no
+    // aparecen en el modo en bloque.
+    const { page } = await abrirSesion();
     await page.evaluate(() => { location.hash = '#/pisos'; });
     await page.waitForSelector('.rack-grid');
-
     await page.locator('[data-bulk]').click();
     await page.waitForSelector('.bulk-bar');
-    const habitaciones = page.locator('.room:not(.inactive)');
-    for (const i of [5, 6]) await habitaciones.nth(i).click();
-    await page.waitForTimeout(250);
-
-    await page.selectOption('.bulk-form [name=accion]', 'oc:SALIDA');
-    await page.locator('[data-apply]').click();
-    await page.waitForSelector('.toast.ok', { timeout: 10000 });
-    assert.match(await page.locator('.toast.ok').textContent(), /2 habitaciones actualizadas/);
-
-    await page.waitForTimeout(800);
-    assert.match(await habitaciones.nth(5).locator('.occ').textContent(), /Salida/);
+    const opciones = await page.locator('.bulk-form [name=accion] option').allTextContents();
+    assert.ok(!opciones.some((o) => /Reportar a Sistemas|Reportar mantenimiento/.test(o)),
+      `los reportes no deben ofrecerse en bloque: ${opciones.join(' | ')}`);
+    assert.ok(opciones.some((o) => /Limpieza terminada/.test(o)));
     await page.close();
   });
 
