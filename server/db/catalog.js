@@ -122,7 +122,10 @@ export const CATEGORIES = [
     { code:'inspeccion', label:'Inspección',  type:'select', options:['Pendiente','Aprobada','Rechazada'], default_value:'Pendiente', is_incident_when:['Rechazada'] },
     { code:'blancos',    label:'Blancos',     type:'select', options:['Completo','Incompleto','Requiere cambio','Dañado'], default_value:'Completo', is_incident_when:['Incompleto','Requiere cambio','Dañado'] },
     { code:'amenidades', label:'Amenidades',  type:'select', options:['Completas','Incompletas','Requiere surtido'], default_value:'Completas', is_incident_when:['Incompletas','Requiere surtido'] },
-    { code:'minibar',    label:'Minibar',     type:'select', options:['Completo','Consumido','Incompleto','Sin servicio'], default_value:'Completo', is_incident_when:['Sin servicio'] },
+    // El código sigue siendo `minibar`: es lo que enlaza el valor guardado de
+    // cada habitación con este campo. Cambiarlo crearía un campo nuevo y
+    // dejaría atrás el histórico de todas las habitaciones.
+    { code:'minibar',    label:'Refrigerador',type:'select', options:['Completo','Consumido','Incompleto','Sin servicio'], default_value:'Completo', is_incident_when:['Sin servicio'] },
     { code:'danios',     label:'Daños',       type:'select', options:['Sin daños','Daño menor','Daño mayor'], default_value:'Sin daños', is_incident_when:['Daño menor','Daño mayor'] },
     { code:'objetos_encontrados', label:'Objetos encontrados', type:'text' },
     { code:'observaciones_ama',   label:'Observaciones',       type:'textarea' },

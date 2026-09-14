@@ -417,6 +417,34 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     assert.equal(id().active, 0);
   });
 
+  test('renombra un campo sin perder lo que las habitaciones ya tenían', () => {
+    const { upgrade } = upgradeMod;
+    const campo = () => one("SELECT id, label FROM fields WHERE code = 'minibar'");
+
+    // El valor de una habitación cuelga del id del campo, no de su nombre:
+    // por eso el código no cambia y el histórico sobrevive al renombre.
+    const room = getRoomByNumber('311');
+    recordMovement({ roomId: room.id, user: user('amadellaves'),
+      details: [{ fieldCode: 'minibar', value: 'Consumido' }], comment: 'Se repone en el turno.' });
+    const antes = campo().id;
+
+    db.prepare("UPDATE fields SET label = 'Minibar' WHERE code = 'minibar'").run();
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Nombre más claro'));
+    assert.equal(campo().label, 'Refrigerador');
+    assert.equal(campo().id, antes, 'el campo es el mismo, sólo cambió su etiqueta');
+    assert.equal(
+      one(`SELECT value v FROM room_details WHERE room_id = @r AND field_id = @f`,
+        { r: room.id, f: antes }).v, 'Consumido', 'el valor de la habitación sigue ahí');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la condición se agota sola');
+
+    // Si el hotel lo renombró a su manera, su decisión manda.
+    db.prepare("UPDATE fields SET label = 'Frigobar' WHERE code = 'minibar'").run();
+    upgrade({ quiet: true });
+    assert.equal(campo().label, 'Frigobar');
+    db.prepare("UPDATE fields SET label = 'Refrigerador' WHERE code = 'minibar'").run();
+  });
+
   test('la simulación no escribe nada', () => {
     const { upgrade } = upgradeMod;
     db.prepare("DELETE FROM settings WHERE key = 'max_photo_mb'").run();

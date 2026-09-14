@@ -20,6 +20,24 @@ import {
 } from './catalog.js';
 
 /**
+ * Etiquetas del catálogo que el CDH cambia al actualizar. No es una migración
+ * de datos: cambia cómo se llama algo, nunca una bandera, un código ni una
+ * relación. `columna` existe porque cada catálogo nombra lo suyo distinto —los
+ * estados tienen `name` y los campos `label`—.
+ *
+ * Sólo se aplica si la fila conserva EXACTAMENTE el valor con el que se
+ * publicó: si el hotel ya la renombró, la decisión es suya y aquí no pasa
+ * nada. La condición se agota sola, así que la segunda pasada tampoco cambia
+ * nada, y el historial no se toca: cada movimiento guarda una copia del nombre
+ * que la cosa tenía cuando se registró.
+ */
+const RENOMBRES = [
+  // El hotel no tiene minibar de cobro: lo que hay en la habitación es un
+  // refrigerador, y así lo nombra Ama de Llaves.
+  { tabla: 'fields', columna: 'label', code: 'minibar', de: 'Minibar', a: 'Refrigerador' },
+];
+
+/**
  * Entradas del catálogo que el CDH deja de usar. Nunca se borran —el historial
  * las referencia y es inmutable—: se dan de baja lógica, y sólo bajo tres
  * condiciones que la hacen segura y reversible desde Administración.
@@ -254,6 +272,14 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       db.prepare('UPDATE rooms SET occupancy_id = NULL, occupancy_changed_at = NULL').run();
       anotar('Ocupación retirada de la habitación',
         `${conOcupacion} habitaciones dejan de llevar un eje de ocupación`);
+    }
+
+    // ------------------------------------------------ Cambios de nombre
+    for (const r of RENOMBRES) {
+      const fila = one(`SELECT id, ${r.columna} AS valor FROM ${r.tabla} WHERE code = @code`, { code: r.code });
+      if (!fila || fila.valor !== r.de) continue;
+      db.prepare(`UPDATE ${r.tabla} SET ${r.columna} = @a WHERE id = @id`).run({ a: r.a, id: fila.id });
+      anotar('Nombre más claro', `${r.de} → ${r.a}`);
     }
 
     // ------------------------------------------------ Bajas del catálogo
