@@ -15,7 +15,7 @@ import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
 import {
-  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
+  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES, CLEANING_PRIORITIES,
   CATEGORIES, MOVEMENT_TYPES, SETTINGS,
 } from './catalog.js';
 
@@ -292,6 +292,13 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       db.prepare('DELETE FROM permissions WHERE id = @id').run({ id: permiso.id });
       anotar('Permiso retirado', `${permiso.name} (${code})`);
     }
+
+    // ------------------------------------- Prioridades de las solicitudes
+    CLEANING_PRIORITIES.forEach((p, i) => {
+      if (idPor('cleaning_priorities', p.code)) return;
+      insert('cleaning_priorities', { ...p, sort_order: i + 1, is_system: 1 });
+      anotar('Prioridad de limpieza', p.name);
+    });
 
     // -------------------------------------------------- Tipos de habitación
     for (const t of ROOM_TYPES) {

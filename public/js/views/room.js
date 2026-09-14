@@ -54,6 +54,12 @@ export async function openRoom(roomId, { onChange = null, tab = 'detalle' } = {}
             </div>
             <span class="tiny muted">${data.movementCount} movimiento${data.movementCount === 1 ? '' : 's'}</span>
           </div>
+          ${data.cleaningRequest ? `<div class="hint-block" style="margin:0 0 10px;border-color:${
+            esc(data.cleaningRequest.priority_color)}66;background:${esc(data.cleaningRequest.priority_color)}12">
+            ${icon('spray', 14)}<span><strong>Limpieza solicitada · ${esc(data.cleaningRequest.priority_name)}.</strong>
+            La pidió ${esc(data.cleaningRequest.requested_by_name)} ${relative(data.cleaningRequest.requested_at)}${
+              data.cleaningRequest.note ? ` — ${esc(data.cleaningRequest.note)}` : ''}.
+            Se cierra sola al registrar la limpieza.</span></div>` : ''}
           <div class="row wrap small muted" style="gap:14px;margin-top:10px">
             <span>${icon('clock', 13)} Última actualización: <strong class="bold" style="color:var(--ink-2)">${
               r.updated_at ? relative(r.updated_at) : 'sin registro'}</strong></span>
@@ -252,9 +258,48 @@ async function actionPanel(panel, data, reload) {
   }
   q.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
-    if (btn) actionForm(room, actions.find((a) => a.code === btn.dataset.action), reload);
+    if (btn) actionForm(room, actions.find((a) => a.code === btn.dataset.action), reload, data.pmsNotice);
   });
   panel.appendChild(grid);
+
+  if (data.canRequestCleaning && data.cleaningPriorities.length) {
+    const sol = el(`<div class="card" style="margin-top:14px">
+      <div class="card-head"><h2>${data.cleaningRequest ? 'Subir la prioridad de la limpieza' : 'Solicitar limpieza'}</h2></div>
+      <div class="card-body">
+        <form id="solicitudForm">
+          <div class="field"><label>Prioridad</label>
+            <select name="priority">${data.cleaningPriorities.map((p) =>
+              `<option value="${esc(p.code)}">${esc(p.name)} — ${esc(p.description ?? '')}</option>`).join('')}</select>
+            ${data.cleaningRequest ? `<span class="hint">Ya hay una solicitud en <strong>${
+              esc(data.cleaningRequest.priority_name)}</strong>: sólo cambia si elige una mayor.</span>` : ''}
+          </div>
+          <div class="field"><label>Nota para Ama de Llaves</label>
+            <textarea name="note" rows="2" placeholder="Qué hay que hacer y por qué corre prisa."></textarea></div>
+          <button class="btn primary block" type="submit">
+            ${data.cleaningRequest ? 'Actualizar la solicitud' : 'Solicitar limpieza'}</button>
+        </form>
+      </div></div>`);
+    $('#solicitudForm', sol).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const btn = $('[type=submit]', e.target);
+      const etiqueta = btn.textContent.trim();
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
+      try {
+        const r = await api.post('/api/cleaning/requests', {
+          roomId: room.id, priority: fd.get('priority'), note: fd.get('note') || null,
+        });
+        toast(r.creadas.length ? `Limpieza solicitada para la habitación ${room.number}.`
+          : r.elevadas.length ? 'Prioridad elevada.'
+            : 'La solicitud ya estaba en una prioridad igual o mayor.', r.sinCambio.length ? 'warn' : 'ok');
+        await reload('detalle');
+      } catch (err) {
+        toast(err.message, 'error', 5200);
+        btn.disabled = false; btn.textContent = etiqueta;
+      }
+    });
+    panel.appendChild(sol);
+  }
 
   if (data.canEditStatus) {
     const sc = el(`<div class="card" style="margin-top:14px">
@@ -267,6 +312,7 @@ async function actionPanel(panel, data, reload) {
             </select></div>
           <div class="field"><label>Comentario</label>
             <textarea name="comment" rows="2" placeholder="Motivo del cambio de estado"></textarea></div>
+          ${data.pmsNotice ? `<div class="pms-notice">${icon('alert', 15)}<span>${esc(data.pmsNotice)}</span></div>` : ''}
           <button class="btn primary block" type="submit">Registrar cambio de estado</button>
         </form>
       </div></div>`);
@@ -291,7 +337,7 @@ async function actionPanel(panel, data, reload) {
 }
 
 /** Formulario de acción: el usuario sólo elige detalle, comentario y fotos. */
-function actionForm(room, action, reload) {
+function actionForm(room, action, reload, avisoPms = null) {
   const allowPhotos = action.allows_photo && can('photo.upload');
   const m = modal({
     title: action.name,
@@ -302,6 +348,7 @@ function actionForm(room, action, reload) {
         ${action.target_status_name ? `<span class="chip info">${icon('swap', 13)}→ ${esc(action.target_status_name)}</span>` : ''}
         ${action.is_incident ? `<span class="chip danger">${icon('alert', 13)}Abre incidencia</span>` : ''}
       </div>
+      ${action.warnsPms && avisoPms ? `<div class="pms-notice">${icon('alert', 15)}<span>${esc(avisoPms)}</span></div>` : ''}
       ${action.asksGuestPresent ? `
       <div class="field">
         <label>¿El huésped estará en la habitación? <span style="color:var(--danger)">*</span></label>

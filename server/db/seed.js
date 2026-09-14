@@ -3,7 +3,7 @@ import { db, migrate, insert, one, transaction } from '../lib/db.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { stamp, setTimezone } from '../lib/time.js';
 import {
-  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES,
+  DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES, CLEANING_PRIORITIES,
   CATEGORIES, MOVEMENT_TYPES, FLOOR_MAP, SETTINGS,
 } from './catalog.js';
 
@@ -60,6 +60,10 @@ export function seed({ quiet = false } = {}) {
       db.prepare('UPDATE room_statuses SET clean_status_id = @destino WHERE id = @id')
         .run({ destino: status[s.clean_status], id: status[s.code] });
     }
+
+    CLEANING_PRIORITIES.forEach((p, i) => {
+      insert('cleaning_priorities', { ...p, sort_order: i + 1, is_system: 1 });
+    });
 
     const rtype = {};
     for (const rt of ROOM_TYPES) rtype[rt.code] = insert('room_types', rt);

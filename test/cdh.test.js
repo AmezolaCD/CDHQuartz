@@ -20,6 +20,7 @@ const stats = await import('../server/lib/stats.js');
 const { FLOOR_MAP } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
 const { backup } = await import('../server/db/backup.js');
+const cleaning = await import('../server/lib/cleaning.js');
 const Database = (await import('better-sqlite3')).default;
 
 const user = (name) => withPermissions(findUserByUsername(name));
@@ -989,6 +990,136 @@ describe('Estados de Arpón y el dato del huésped', () => {
     assert.equal(r.aplicadas.length, 1, 'sólo la que esperaba limpieza');
     assert.equal(r.omitidas.length, 2);
     assert.ok(r.omitidas.every((o) => o.motivo === 'no esperaba limpieza'));
+  });
+});
+
+describe('Centro de solicitudes de limpieza', () => {
+  const pedir = (numero, quien, priority, note = null) => cleaning.requestCleaning({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien), priorityCode: priority, note,
+  });
+  const cola = () => cleaning.listRequests({ status: 'pendiente' });
+
+  test('Recepción pide, y la solicitud queda en cola con su movimiento', () => {
+    const room = getRoomByNumber('901');
+    const r = pedir(901, 'recepcion', 'ALTA', 'El huésped llega a las 3.');
+    assert.equal(r.creada, true);
+    assert.equal(r.request.status, 'pendiente');
+    assert.equal(r.request.priority_code, 'ALTA');
+    assert.equal(r.request.requested_by_name, 'Recepción Turno A');
+
+    // El movimiento vive en el expediente de la habitación, como todo.
+    const m = one('SELECT * FROM movements WHERE id = @id', { id: r.request.movement_id });
+    assert.equal(m.action_code, 'CLEAN_REQUEST');
+    assert.equal(m.room_id, room.id);
+    assert.match(m.comment, /Alta/);
+    assert.match(m.comment, /llega a las 3/);
+  });
+
+  test('avisa a Ama de Llaves, que es quien la atiende', () => {
+    const r = pedir(902, 'recepcion', 'MEDIA');
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: r.request.movement_id });
+    assert.ok(n, 'una solicitud sin aviso no llega a nadie');
+    const destinos = all(`
+      SELECT d.code FROM notification_recipients nr
+        JOIN departments d ON d.id = nr.department_id
+       WHERE nr.notification_id = @id`, { id: n.id }).map((x) => x.code);
+    assert.ok(destinos.includes('AMA'), `debía avisar a Ama de Llaves: ${destinos.join(', ')}`);
+  });
+
+  test('pedir dos veces no duplica el trabajo: sube la prioridad o no cambia nada', () => {
+    pedir(903, 'recepcion', 'BAJA');
+    const subida = pedir(903, 'recepcion', 'URGENTE', 'El huésped está en el lobby.');
+    assert.equal(subida.creada, false);
+    assert.equal(subida.elevada, true);
+    assert.equal(subida.request.priority_code, 'URGENTE');
+
+    const otra = pedir(903, 'amadellaves', 'MEDIA');
+    assert.equal(otra.elevada, false, 'una prioridad menor no rebaja la que ya había');
+    assert.equal(otra.request.priority_code, 'URGENTE');
+
+    assert.equal(
+      one("SELECT COUNT(*) n FROM cleaning_requests WHERE room_id = @id AND status = 'pendiente'",
+        { id: getRoomByNumber('903').id }).n, 1, 'una habitación, una sola solicitud en cola');
+  });
+
+  test('la cola pone primero lo urgente y, a igual prioridad, lo que lleva más esperando', () => {
+    const pendientes = cola().filter((s) => ['901', '902', '903'].includes(s.room_number));
+    assert.deepEqual(pendientes.map((s) => s.room_number), ['903', '901', '902'],
+      'urgente, luego alta, luego media');
+  });
+
+  test('limpiar la habitación cierra la solicitud sola, sin un movimiento de más', () => {
+    const room = getRoomByNumber('904');
+    recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
+    pedir(904, 'recepcion', 'ALTA');
+    const antes = one('SELECT COUNT(*) n FROM movements WHERE room_id = @id', { id: room.id }).n;
+
+    const limpia = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.ok(limpia.cleaningRequestClosed, 'la limpieza debe cerrar la solicitud');
+
+    const s = one("SELECT * FROM cleaning_requests WHERE room_id = @id ORDER BY id DESC LIMIT 1", { id: room.id });
+    assert.equal(s.status, 'atendida');
+    assert.equal(s.closed_by_name, 'Jefa de Ama de Llaves');
+    assert.equal(s.closed_movement_id, limpia.primaryId);
+    assert.equal(one('SELECT COUNT(*) n FROM movements WHERE room_id = @id', { id: room.id }).n, antes + 1,
+      'el movimiento de la limpieza ya cuenta lo ocurrido: no hace falta otro');
+  });
+
+  test('cancelar exige un motivo y lo deja escrito', () => {
+    const r = pedir(905, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.cancelRequest({ id: r.request.id, user: user('recepcion') }),
+      (e) => e.status === 400 && /necesita un motivo/.test(e.message));
+
+    const cancelada = cleaning.cancelRequest({
+      id: r.request.id, user: user('recepcion'), reason: 'El huésped ya no llega.',
+    });
+    assert.equal(cancelada.status, 'cancelada');
+    assert.equal(cancelada.closed_reason, 'El huésped ya no llega.');
+    assert.equal(
+      one('SELECT action_code FROM movements WHERE id = @id', { id: cancelada.closed_movement_id }).action_code,
+      'CLEAN_REQUEST_CANCEL');
+  });
+
+  test('una solicitud cerrada no se cierra dos veces', () => {
+    const r = pedir(906, 'recepcion', 'MEDIA');
+    cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') });
+    assert.throws(
+      () => cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') }),
+      (e) => e.status === 409 && /ya está atendida/.test(e.message));
+  });
+
+  test('sin el permiso no se solicita limpieza', () => {
+    const sinPermiso = {
+      ...user('amadellaves'),
+      permissions: user('amadellaves').permissions.filter((p) => p !== 'cleaning.request'),
+    };
+    assert.throws(
+      () => cleaning.requestCleaning({ roomId: getRoomByNumber('908').id, user: sinPermiso, priorityCode: 'BAJA' }),
+      (e) => e.status === 403);
+  });
+
+  test('entregar una habitación limpia la saca de la venta', () => {
+    const room = getRoomByNumber('910');
+    assert.equal(room.counts_ready, 1, 'parte limpia y libre');
+    const r = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'DELIVER',
+      comment: 'A nombre de Pérez.' });
+    assert.equal(r.room.status_code, 'ENTRADA_NUEVA');
+    assert.equal(r.room.counts_ready, 0, 'entregada deja de contar como disponible');
+  });
+
+  test('la entrega avisa de que hay que repetirla en el PMS', () => {
+    const aviso = cleaning.pmsNotice();
+    assert.match(aviso, /Arpón Enterprise/);
+    const entrega = one("SELECT warns_pms FROM movement_types WHERE code = 'DELIVER'");
+    assert.equal(entrega.warns_pms, 1, 'la acción tiene que pedir el aviso');
+  });
+
+  test('el resumen cuenta lo pendiente y nombra lo más urgente', () => {
+    const resumen = cleaning.pendingSummary();
+    assert.equal(resumen.total, cola().length);
+    assert.equal(resumen.masUrgente.name, 'Urgente');
+    assert.equal(resumen.porPrioridad[0].code, 'URGENTE', 'el reparto va de más urgente a menos');
   });
 });
 

@@ -18,6 +18,7 @@ export const PERMISSIONS = [
   { code: 'room.edit',        grp: 'Habitaciones', name: 'Editar detalles de habitación' },
   { code: 'room.status',      grp: 'Habitaciones', name: 'Cambiar estado de habitación' },
   { code: 'movement.create',  grp: 'Habitaciones', name: 'Crear movimientos' },
+  { code: 'cleaning.request', grp: 'Habitaciones', name: 'Solicitar limpieza de habitaciones' },
   { code: 'history.view',     grp: 'Habitaciones', name: 'Ver historial' },
   { code: 'photo.upload',     grp: 'Habitaciones', name: 'Adjuntar fotografías' },
   { code: 'report.view',      grp: 'Reportes',     name: 'Ver reportes' },
@@ -31,7 +32,7 @@ export const PERMISSIONS = [
   { code: 'admin.settings',   grp: 'Administración', name: 'Administrar configuraciones' },
 ];
 
-const OPERATIVO = ['room.view','room.edit','room.status','movement.create','history.view','photo.upload','report.view'];
+const OPERATIVO = ['room.view','room.edit','room.status','movement.create','cleaning.request','history.view','photo.upload','report.view'];
 
 export const ROLES = [
   { code: 'ADMIN', name: 'Administrador', department_scope: 0, is_system: 1,
@@ -60,7 +61,7 @@ export const ROLES = [
 
   { code: 'RECEPCION', name: 'Recepción', department_scope: 1, is_system: 1,
     description: 'Consulta habitaciones y registra observaciones autorizadas.',
-    permissions: ['room.view','room.status','movement.create','history.view','photo.upload','report.view'] },
+    permissions: ['room.view','room.status','movement.create','cleaning.request','history.view','photo.upload','report.view'] },
 
   { code: 'OTROS', name: 'Otros', department_scope: 1, is_system: 0,
     description: 'Consulta básica.',
@@ -94,6 +95,20 @@ export const ROOM_STATUSES = [
   { code:'FUERA_SERVICIO',    name:'Fuera de servicio', icon:'ban',          color:'#b91c1c',
     counts_blocked:1, counts_attention:1, attention_weight:4,
     description:'No se puede vender: tiene una falla que lo impide.' },
+];
+
+// Prioridad de una solicitud de limpieza. Lo que ordena la cola es `weight`,
+// no el nombre ni el color: así el hotel puede intercalar una prioridad nueva
+// entre dos existentes sin tocar código.
+export const CLEANING_PRIORITIES = [
+  { code:'BAJA',    name:'Baja',    icon:'clock', color:'#64748b', weight:1, notify_severity:'normal',
+    description:'Cuando se pueda, sin prisa.' },
+  { code:'MEDIA',   name:'Media',   icon:'clock', color:'#0891b2', weight:2, notify_severity:'normal',
+    description:'Dentro del turno.' },
+  { code:'ALTA',    name:'Alta',    icon:'alert', color:'#d97706', weight:3, notify_severity:'alta',
+    description:'Antes que el resto del piso.' },
+  { code:'URGENTE', name:'Urgente', icon:'alert', color:'#dc2626', weight:4, notify_severity:'critica',
+    description:'El huésped está esperando.' },
 ];
 
 const EST_MTTO   = ['OK','Requiere revisión','Falla','Fuera de servicio'];
@@ -147,10 +162,11 @@ export const CATEGORIES = [
 // el ciclo de limpieza del PMS. Un reporte abierto ya impide por sí solo que
 // la habitación quede disponible, así que no hace falta un estado para eso.
 export const MOVEMENT_TYPES = [
-  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:null, target_from_clean:1, icon:'sparkles', is_quick_action:1, sort_order:1 },
+  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:null, target_from_clean:1, icon:'sparkles', is_quick_action:1, closes_cleaning_request:1, sort_order:1 },
   { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:null,                  icon:'clipboard',    is_quick_action:1, sort_order:2 },
-  { code:'GUEST_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:'SALIDA',              icon:'logout',       is_quick_action:1, sort_order:3 },
-  { code:'GUEST_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:'OCUPADO_LIMPIO',      icon:'user',         is_quick_action:1, sort_order:4 },
+  { code:'GUEST_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:'SALIDA',              icon:'logout',       is_quick_action:1, warns_pms:1, sort_order:3 },
+  { code:'DELIVER',     name:'Entregar habitación',     category:'OTROS',target_status:'ENTRADA_NUEVA',       icon:'door',         is_quick_action:1, warns_pms:1, sort_order:4 },
+  { code:'GUEST_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:'OCUPADO_LIMPIO',      icon:'user',         is_quick_action:1, warns_pms:1, sort_order:5 },
   { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:null,                  icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:5 },
   { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
   { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:null,                  icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:7 },
@@ -161,6 +177,13 @@ export const MOVEMENT_TYPES = [
   { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE_LIMPIO',   icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:12 },
   { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, sort_order:13 },
   { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, sort_order:14 },
+  // Las solicitudes de limpieza no son acciones rápidas: se piden desde el
+  // centro de solicitudes o desde el expediente, que es donde se elige la
+  // prioridad. Existen como tipo para que cada cambio deje su movimiento.
+  { code:'CLEAN_REQUEST',        name:'Solicitud de limpieza',            category:'AMA', target_status:null, icon:'spray',    is_quick_action:0, is_system:1, notify:1, cross_department:1, sort_order:30 },
+  { code:'CLEAN_REQUEST_RAISE',  name:'Prioridad de limpieza elevada',    category:'AMA', target_status:null, icon:'alert',    is_quick_action:0, is_system:1, notify:1, cross_department:1, sort_order:31 },
+  { code:'CLEAN_REQUEST_DONE',   name:'Solicitud de limpieza atendida',   category:'AMA', target_status:null, icon:'check',    is_quick_action:0, is_system:1, cross_department:1, sort_order:32 },
+  { code:'CLEAN_REQUEST_CANCEL', name:'Solicitud de limpieza cancelada',  category:'AMA', target_status:null, icon:'x',        is_quick_action:0, is_system:1, cross_department:1, sort_order:33 },
   { code:'STATUS_CHANGE', name:'Cambio de estado',      category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:20 },
   { code:'DETAIL_UPDATE', name:'Actualización de detalle', category:null,target_status:null,                  icon:'edit',         is_quick_action:0, is_system:1, sort_order:21 },
 ];
@@ -201,6 +224,8 @@ export const SETTINGS = [
   { key:'recurrence_thresholds',  value:'2,3,5,10',       label:'Umbrales de reincidencia',    grp:'Operación', type:'text' },
   { key:'activity_feed_size',     value:'25',             label:'Movimientos en actividad reciente', grp:'Operación', type:'number' },
   { key:'bulk_max_rooms',         value:'40',             label:'Máximo de habitaciones por cambio en bloque', grp:'Operación', type:'number' },
+  { key:'pms_name',               value:'Arpón Enterprise', label:'Nombre del PMS del hotel',  grp:'Operación', type:'text' },
+  { key:'pms_manual_sync',        value:'1',              label:'Avisar que el cambio debe repetirse en el PMS', grp:'Operación', type:'boolean' },
   { key:'notify_critical',        value:'1',              label:'Notificar incidencias críticas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_blocked',         value:'1',              label:'Notificar habitaciones bloqueadas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_maintenance',     value:'1',              label:'Notificar mantenimiento crítico', grp:'Notificaciones', type:'boolean' },

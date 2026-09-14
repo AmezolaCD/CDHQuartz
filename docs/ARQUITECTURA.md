@@ -123,6 +123,46 @@ La tabla `room_occupancies` sigue en el esquema, vacía de filas activas. No se
 elimina porque los movimientos ya registrados apuntan a ella y el historial es
 inmutable.
 
+## La cola de limpieza
+
+Una solicitud de limpieza es **estado actual**, no historial: es una cola que
+se vacía. Por eso vive en su propia tabla, como `rooms`, y no en `movements`.
+Lo inmutable es el movimiento que cada cambio suyo deja en el expediente de la
+habitación, y por eso todo pasa por `recordMovement`: la solicitud hereda su
+auditoría, su notificación y su sello de tiempo sin duplicar nada.
+
+Lo que ordena la cola es `cleaning_priorities.weight`, no el nombre ni el
+color: el hotel puede intercalar una prioridad nueva entre dos existentes sin
+tocar código. A igual peso ordena la antigüedad, así que nada se queda al
+fondo para siempre.
+
+Un índice único parcial impone la regla de que **una habitación no tiene dos
+solicitudes pendientes**:
+
+```sql
+CREATE UNIQUE INDEX ux_solic_pendiente
+  ON cleaning_requests(room_id) WHERE status = 'pendiente';
+```
+
+Pedirla otra vez sube la prioridad de la que ya había. Dos solicitudes no son
+dos trabajos, y la cola tiene que decir cuánto falta por hacer, no cuántas
+veces lo han pedido.
+
+El cierre no depende de que alguien se acuerde: un tipo de movimiento marcado
+con `closes_cleaning_request` —hoy «Limpieza terminada»— da por atendida la
+solicitud pendiente de esa habitación dentro de la misma transacción, y sin
+crear un movimiento aparte, porque no ocurrió nada aparte.
+
+## Mientras el PMS no esté enlazado
+
+El CDH y Arpón Enterprise llevan cada uno su copia del estado de la habitación.
+Hasta que hablen entre ellos, la única garantía de que no se descuadren es que
+quien opera lo tenga delante: los tipos de movimiento marcados con `warns_pms`
+muestran el aviso **antes** de guardar, no como un mensaje que se desvanece
+después. El nombre del PMS (`pms_name`) y el propio aviso (`pms_manual_sync`)
+son configuraciones, no texto fijo: el día que se enlacen, se apaga sin tocar
+código.
+
 ## Los reportes y la venta
 
 Un reporte **no mueve el estado**: el estado lo lleva Ama de Llaves y refleja el

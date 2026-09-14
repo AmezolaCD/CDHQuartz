@@ -11,6 +11,7 @@ import { seed } from './db/seed.js';
 
 import authRoutes from './routes/auth.js';
 import roomRoutes from './routes/rooms.js';
+import cleaningRoutes from './routes/cleaning.js';
 import dashboardRoutes from './routes/dashboard.js';
 import catalogRoutes from './routes/catalog.js';
 import adminRoutes from './routes/admin.js';
@@ -39,6 +40,7 @@ app.use(attachUser);
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/cleaning', cleaningRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/integrations', integrationRoutes);

@@ -340,6 +340,20 @@ de Ama de Llaves de Arpón se leen una junto a la otra sin traducir nada.
 queda *Ocupado limpio* y una *Salida* queda *Disponible limpio*. Una acción con
 un único destino mentiría en la mitad de los casos.
 
+**Centro de solicitudes de limpieza.** Recepción pide y Ama de Llaves atiende,
+con prioridad *Baja*, *Media*, *Alta* o *Urgente*. La cola se ordena sola: lo
+más urgente primero y, a igual prioridad, lo que lleva más tiempo esperando.
+Una habitación no puede tener dos solicitudes a la vez —la segunda sube la
+prioridad de la primera en vez de duplicar el trabajo— y **registrar la
+limpieza la cierra sola**, sin un paso extra que recordar. Desde el mismo
+centro, Recepción toma habitaciones ya limpias para **entregarlas**: pasan a
+*Entrada nueva* y dejan de contar como disponibles.
+
+**Lo que cambie aquí hay que cambiarlo también en el PMS.** Mientras el CDH y
+Arpón Enterprise no estén enlazados, toda acción que mueva lo que el PMS
+también lleva lo avisa **antes** de guardar, no después. El nombre del PMS y el
+propio aviso se configuran (`pms_name`, `pms_manual_sync`).
+
 **Si el huésped estará en la habitación es un dato del REPORTE, no un estado.**
 Quien reporta a Mantenimiento o a Sistemas contesta si lo encontrarán dentro, y
 esa respuesta viaja con el movimiento y con la notificación. Sirve en el
@@ -381,6 +395,7 @@ registra ninguna. El tope por lote es configurable (`bulk_max_rooms`).
 ```
 departments  roles  permissions  role_permissions  users  sessions
 floors  room_types  room_statuses  rooms              ← estado actual
+cleaning_priorities  cleaning_requests                 ← cola de limpieza
 categories  fields  room_details                  ← estado actual por campo
 movement_types  movements                         ← historial inmutable
 attachments  audit_log  notifications  settings

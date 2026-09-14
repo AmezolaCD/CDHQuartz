@@ -94,6 +94,22 @@ const COLUMNAS_NUEVAS = [
   { table: 'movement_types', column: 'asks_guest_present', ddl: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'room_statuses', column: 'clean_status_id', ddl: 'INTEGER REFERENCES room_statuses(id)' },
   {
+    // Sin este relleno la bandera nunca llegaría a una acción que YA existe:
+    // la puesta al día sólo inserta los tipos de movimiento que faltan, así
+    // que "Limpieza terminada" se quedaría sin cerrar ninguna solicitud.
+    table: 'movement_types',
+    column: 'closes_cleaning_request',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    backfill: "UPDATE movement_types SET closes_cleaning_request = 1 WHERE code = 'CLEAN_DONE'",
+  },
+  {
+    table: 'movement_types',
+    column: 'warns_pms',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    // DELIVER nace con la bandera puesta; estas dos ya existían.
+    backfill: "UPDATE movement_types SET warns_pms = 1 WHERE code IN ('GUEST_IN', 'GUEST_OUT')",
+  },
+  {
     table: 'room_statuses',
     column: 'attention_weight',
     ddl: 'INTEGER NOT NULL DEFAULT 3',

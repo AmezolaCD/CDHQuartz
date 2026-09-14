@@ -9,6 +9,13 @@ import { bulkActivo, bulkAlternar, bulkPiso, bulkPuedeUsarse, montarBarraBloque 
 /** Tarjeta compacta de habitación para el mapa del piso. */
 export function roomCard(r) {
   const flags = [];
+  // Una limpieza pedida se ve en el rack con el color de su prioridad: quien
+  // hace la ronda no debería tener que abrir otra pantalla para saberlo.
+  if (r.cleaningRequest) {
+    flags.push(`<span class="flag solicitud" style="--pr:${esc(r.cleaningRequest.color)}"
+      title="Limpieza solicitada · ${esc(r.cleaningRequest.priority)} — pidió ${esc(r.cleaningRequest.by)}">${
+      icon('spray', 10)}${esc(r.cleaningRequest.priority)}</span>`);
+  }
   if (r.incidentCount) flags.push(`<span class="flag inc" title="Incidencias abiertas">${icon('alert', 10)}${r.incidentCount}</span>`);
   if (r.recurrenceCount >= 2) flags.push(`<span class="flag rec" title="Reincidente">${icon('repeat', 10)}${r.recurrenceCount}</span>`);
   if (!r.incidentCount && r.counts_attention) flags.push(`<span class="flag att">${icon('bell', 10)}</span>`);
@@ -35,6 +42,8 @@ function kpis(o) {
     kpi('Habitaciones', o.total, { accent: 'var(--plum-500)', target: o.target !== o.total ? o.target : null,
       sub: o.inactivas ? `${o.inactivas} inactivas` : 'Todas activas' }),
     kpi('Disponibles limpias', o.listas, { accent: 'var(--ok)' }),
+    kpi('Limpiezas pedidas', o.solicitudesPendientes ?? 0, { accent: '#7c3aed',
+      sub: o.solicitudUrgente ? `la más urgente: ${o.solicitudUrgente}` : 'Nada en cola' }),
     // Con los estados del PMS no hay un "en limpieza": lo que cuenta es lo que
     // le falta a Ama de Llaves por atender.
     kpi('Por limpiar', o.limpieza, { accent: '#0891b2' }),
@@ -79,7 +88,9 @@ export async function renderFloorMap(container, floorId, onRoomChange) {
         <div>
           <h2>${esc(data.floor.name)}</h2>
           <p class="tiny muted" style="margin:3px 0 0">
-            ${data.totals.rooms} habitaciones${data.totals.attention ? ` · ${data.totals.attention} requieren atención` : ''}
+            ${data.totals.rooms} habitaciones${
+              data.totals.cleaningRequests ? ` · ${data.totals.cleaningRequests} con limpieza pedida` : ''}${
+              data.totals.attention ? ` · ${data.totals.attention} requieren atención` : ''}
             ${enBloque ? ' · <strong>toque las habitaciones para seleccionarlas</strong>' : ''}
           </p>
         </div>
