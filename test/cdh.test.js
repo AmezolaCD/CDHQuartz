@@ -483,10 +483,11 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
 
     const acciones = upgrade({ quiet: true });
     assert.ok(acciones.some((a) => a.grupo === 'Destino que apuntaba a un estado retirado'));
-    assert.equal(reportar().room.status_code, 'FUERA_SERVICIO', 'la acción vuelve a llevar a algún sitio');
-    assert.equal(
-      one("SELECT s.code c FROM categories t JOIN room_statuses s ON s.id = t.pending_status_id WHERE t.code = 'SIS'").c,
-      'FUERA_SERVICIO');
+    const antes = getRoomByNumber('312').status_code;
+    assert.equal(reportar().room.status_code, antes,
+      'la acción vuelve a funcionar, y un reporte no mueve el estado');
+    assert.equal(one("SELECT pending_status_id p FROM categories WHERE code = 'SIS'").p, null,
+      'y la categoría deja de mandar la habitación a ningún sitio');
     assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
   });
 
@@ -758,9 +759,10 @@ describe('Reportes entre departamentos y notificaciones dirigidas', () => {
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
       comment: 'La TV no da señal.', guestPresent: 'no',
     });
-    // El reporte no manda a un estado de su área —eso ya no existe—, pero sí
-    // saca de la venta a la habitación que estaba disponible.
-    assert.equal(res.room.status_code, 'FUERA_SERVICIO');
+    // El reporte abre su pendiente y deja la habitación donde estaba: sacarla
+    // de servicio es una decisión de quien opera, no del sistema.
+    assert.equal(res.room.status_code, room.status_code);
+    assert.equal(stats.openIncidentsForRoom(room.id).length, 1);
   });
 
   test('pero no puede cerrar el trabajo de Sistemas', () => {
@@ -844,7 +846,7 @@ describe('No se libera una habitación con un pendiente abierto', () => {
   test('un reporte a Sistemas impide liberar', () => {
     reporte(610, 'amadellaves', 'SYS_REPORT', 'Televisión sin señal.');
     assert.throws(() => mov(610, 'supervisor', 'RELEASE', 'Se intenta cerrar.'),
-      (e) => e instanceof MovementError && e.status === 409 && /no puede quedar como/.test(e.message));
+      (e) => e instanceof MovementError && e.status === 409 && /no se puede liberar/.test(e.message));
     // El mensaje dice qué falta, no sólo que no se puede.
     try { mov(610, 'supervisor', 'RELEASE', 'Se intenta cerrar.'); } catch (e) {
       assert.match(e.message, /610/);
@@ -898,13 +900,17 @@ describe('No se libera una habitación con un pendiente abierto', () => {
     assert.equal(getRoomByNumber('613').counts_ready, 1);
   });
 
-  test('el cambio manual de estado no es una puerta trasera', () => {
+  test('el estado no es una puerta trasera para cerrar el pendiente', () => {
+    // La habitación puede volver a la venta con el reporte abierto —es lo que
+    // dice la leyenda del rack—, pero el pendiente sigue ahí: el estado no lo
+    // cierra. Antes sí lo cerraba, y así se borraba trabajo sin hacerlo.
     reporte(614, 'amadellaves', 'SYS_REPORT', 'Caja fuerte trabada.');
-    assert.throws(() => estado(614, 'supervisor', 'DISPONIBLE_LIMPIO'),
+    estado(614, 'supervisor', 'DISPONIBLE_LIMPIO');
+    assert.equal(getRoomByNumber('614').counts_ready, 1, 'el reporte no la saca de la venta');
+    assert.equal(stats.openIncidentsForRoom(getRoomByNumber('614').id).length, 1,
+      'y el pendiente sigue abierto hasta que alguien lo cierre');
+    assert.throws(() => mov(614, 'supervisor', 'RELEASE', 'Se intenta cerrar.'),
       (e) => e instanceof MovementError && e.status === 409);
-    // Un estado que no devuelve al servicio sí se puede poner.
-    estado(614, 'supervisor', 'OCUPADO_SUCIO');
-    assert.equal(getRoomByNumber('614').status_code, 'OCUPADO_SUCIO');
   });
 
   test('en bloque: una habitación con pendiente detiene el lote entero', () => {
@@ -914,7 +920,7 @@ describe('No se libera una habitación con un pendiente abierto', () => {
     const ids = ['615', '616'].map((n) => getRoomByNumber(n).id);
     assert.throws(
       () => recordBulkMovement({ roomIds: ids, user: user('supervisor'), movementTypeCode: 'RELEASE', comment: 'Piso listo.' }),
-      (e) => /616/.test(e.message) && /no puede quedar como/.test(e.message));
+      (e) => /616/.test(e.message) && /no se puede liberar/.test(e.message));
     assert.equal(getRoomByNumber('615').status_code, 'SALIDA', 'el lote es todo o nada');
   });
 
@@ -931,86 +937,120 @@ describe('No se libera una habitación con un pendiente abierto', () => {
   });
 });
 
-describe('Una falla saca la habitación del servicio', () => {
+describe('Un reporte abre la alerta, no saca la habitación de servicio', () => {
+  // Fuera de servicio se deja una habitación con un problema grave, que va a
+  // durar un día o más, y eso lo decide quien opera: tiene su propia acción.
+  // Un reporte corriente abre su pendiente y deja la habitación donde estaba,
+  // marcada con "Reporte abierto".
   const campo = (numero, quien, code, valor, extra = {}) => recordMovement({
     roomId: getRoomByNumber(String(numero)).id, user: user(quien),
     details: [{ fieldCode: code, value: valor }], ...extra,
   });
-  const mov = (numero, quien, code, comentario) => recordMovement({
+  const mov = (numero, quien, code, comentario, extra = {}) => recordMovement({
     roomId: getRoomByNumber(String(numero)).id, user: user(quien),
-    movementTypeCode: code, comment: comentario,
+    movementTypeCode: code, comment: comentario, ...extra,
   });
+  const pendientes = (numero) => stats.openIncidentsForRoom(getRoomByNumber(String(numero)).id).length;
 
-  test('marcar un campo de Mantenimiento en falla retira la habitación de la venta', () => {
-    assert.equal(getRoomByNumber('617').counts_ready, 1, 'parte disponible');
+  test('marcar un campo de Mantenimiento en falla deja la habitación donde estaba', () => {
+    const antes = getRoomByNumber('617');
+    assert.equal(antes.counts_ready, 1, 'parte disponible');
     campo(617, 'mantenimiento', 'plomeria', 'Falla');
-    assert.equal(getRoomByNumber('617').status_code, 'FUERA_SERVICIO');
+    assert.equal(getRoomByNumber('617').status_code, antes.status_code,
+      'la falla no decide por nadie que la habitación salga de servicio');
+    assert.equal(pendientes(617), 1, 'pero sí queda el pendiente a la vista');
   });
 
-  test('el retiro queda en el historial como un movimiento propio', () => {
-    const movs = all(
-      "SELECT action, old_status_name, new_status_name FROM movements WHERE room_number = '617' ORDER BY id");
-    const retiro = movs.find((m) => /Retirada del servicio/.test(m.action));
-    assert.ok(retiro, 'debe existir un movimiento que explique el cambio de estado');
-    // Los nombres se comparan contra el catálogo: una prueba anterior renombra
-    // un estado a propósito, y el historial guarda el nombre del momento.
-    const nombre = (code) => one('SELECT name FROM room_statuses WHERE code = @code', { code }).name;
-    assert.equal(retiro.old_status_name, nombre('DISPONIBLE_LIMPIO'));
-    assert.equal(retiro.new_status_name, nombre('FUERA_SERVICIO'));
+  test('y no inventa ningún cambio de estado en el historial', () => {
+    // Todo movimiento guarda el estado de antes y el de después; lo que aquí
+    // no puede haber es uno donde difieran.
+    const cambios = all(`SELECT action FROM movements
+                          WHERE room_number = '617' AND old_status_id <> new_status_id`);
+    assert.deepEqual(cambios, [], 'ningún movimiento de esa habitación cambió el estado');
   });
 
-  test('la falla de Sistemas la retira igual que la de Mantenimiento', () => {
+  test('la falla de Sistemas se comporta igual', () => {
+    const antes = getRoomByNumber('618').status_code;
     campo(618, 'sistemas', 'wifi', 'Sin servicio');
-    assert.equal(getRoomByNumber('618').status_code, 'FUERA_SERVICIO');
+    assert.equal(getRoomByNumber('618').status_code, antes);
+    assert.equal(pendientes(618), 1);
   });
 
-  test('corregir el campo no devuelve sola la habitación: hay que liberarla', () => {
+  test('pero con el pendiente abierto no se puede liberar, ni estando ya disponible', () => {
+    // Es la otra mitad de la regla: el reporte no la saca de venta, y nadie
+    // puede declararla lista mientras el pendiente siga abierto. Sin esto,
+    // "Liberar" sobre una habitación que ya figura disponible cerraría el
+    // pendiente sin que nadie lo hubiera atendido.
+    assert.equal(getRoomByNumber('617').counts_ready, 1, 'sigue a la venta');
+    assert.throws(() => mov(617, 'supervisor', 'RELEASE', 'Va.'),
+      (e) => e instanceof MovementError && e.status === 409 && /Plomería/.test(e.message));
+    assert.equal(pendientes(617), 1, 'el pendiente sigue abierto');
+  });
+
+  test('corregido el campo, la habitación se libera con normalidad', () => {
     campo(617, 'mantenimiento', 'plomeria', 'OK');
-    assert.equal(getRoomByNumber('617').status_code, 'FUERA_SERVICIO');
+    assert.equal(pendientes(617), 0);
     mov(617, 'supervisor', 'RELEASE', 'Reparada y revisada.');
     assert.equal(getRoomByNumber('617').counts_ready, 1);
   });
 
-  test('un campo de Ama de Llaves no retira la habitación de la venta', () => {
+  test('un campo de Ama de Llaves no abre pendiente que bloquee', () => {
     campo(619, 'amadellaves', 'blancos', 'Incompleto');
     assert.equal(getRoomByNumber('619').counts_ready, 1);
+    mov(619, 'supervisor', 'RELEASE', 'Se repone en el turno.');
+    assert.equal(getRoomByNumber('619').counts_ready, 1, 'Ama de Llaves no bloquea la venta');
   });
 
-  test('una habitación que ya no estaba a la venta no cambia de estado', () => {
-    recordMovement({ roomId: getRoomByNumber('620').id, user: user('supervisor'), statusCode: 'SALIDA' });
-    campo(620, 'mantenimiento', 'hvac', 'Falla');
-    assert.equal(getRoomByNumber('620').status_code, 'SALIDA',
-      'sólo se retira a la que estaba en servicio; el resto sigue su ciclo');
+  test('el hotel puede recuperar el retiro automático por categoría', () => {
+    // El mecanismo sigue ahí, apagado: si una categoría declara a dónde mandar
+    // la habitación, un reporte suyo la lleva. Se configura desde
+    // Administración, sin tocar código, y el catálogo lo deja vacío.
+    const fuera = one("SELECT id FROM room_statuses WHERE code = 'FUERA_SERVICIO'").id;
+    db.prepare("UPDATE categories SET pending_status_id = @s WHERE code = 'MTTO'").run({ s: fuera });
+    try {
+      assert.equal(getRoomByNumber('605').counts_ready, 1, 'parte disponible');
+      campo(605, 'mantenimiento', 'plomeria', 'Falla');
+      assert.equal(getRoomByNumber('605').status_code, 'FUERA_SERVICIO');
+
+      // Y con el destino configurado, pedir a la vez un estado de servicio es
+      // contradictorio: se rechaza en vez de decidir por el usuario.
+      recordMovement({ roomId: getRoomByNumber('622').id, user: user('supervisor'), statusCode: 'SALIDA' });
+      assert.throws(
+        () => campo(622, 'mantenimiento', 'plomeria', 'Falla', {
+          statusCode: 'DISPONIBLE_LIMPIO', comment: 'Contradictorio.',
+        }),
+        (e) => e instanceof MovementError && e.status === 409 && /en este mismo registro se reporta/.test(e.message));
+      assert.equal(getRoomByNumber('622').status_code, 'SALIDA', 'no debe quedar nada a medias');
+      assert.equal(
+        one("SELECT value v FROM room_details rd JOIN fields f ON f.id = rd.field_id WHERE rd.room_id = @r AND f.code = 'plomeria'",
+          { r: getRoomByNumber('622').id })?.v ?? 'OK',
+        'OK', 'el campo tampoco se guardó');
+    } finally {
+      db.prepare("UPDATE categories SET pending_status_id = NULL WHERE code = 'MTTO'").run();
+    }
   });
 
-  test('pedir un estado de servicio mientras se reporta la falla se rechaza', () => {
-    recordMovement({ roomId: getRoomByNumber('622').id, user: user('supervisor'), statusCode: 'SALIDA' });
-    assert.throws(
-      () => campo(622, 'mantenimiento', 'plomeria', 'Falla', {
-        statusCode: 'DISPONIBLE_LIMPIO', comment: 'Contradictorio.',
-      }),
-      (e) => e instanceof MovementError && e.status === 409 && /en este mismo registro se reporta/.test(e.message));
-    assert.equal(getRoomByNumber('622').status_code, 'SALIDA', 'no debe quedar nada a medias');
-    assert.equal(
-      one("SELECT value v FROM room_details rd JOIN fields f ON f.id = rd.field_id WHERE rd.room_id = @r AND f.code = 'plomeria'",
-        { r: getRoomByNumber('622').id })?.v ?? 'OK',
-      'OK', 'el campo tampoco se guardó');
-  });
-
-  test('el retiro no exige permiso de cambiar estados', () => {
-    // Lo provoca el sistema al detectar la falla, no lo pide el usuario.
-    // Quien reporta puede no tener `room.status`, y dejar la habitación a la
-    // venta sería lo inseguro.
+  test('reportar no exige permiso de cambiar estados', () => {
+    // Quien reporta puede no tener `room.status`; ya no hace falta, porque el
+    // reporte no mueve el estado de la habitación.
     const jefe = user('mantenimiento');
     assert.ok(jefe.permissions.includes('room.edit'));
     const antes = getRoomByNumber('1002');
-    assert.equal(antes.counts_ready, 1);
     recordMovement({
       roomId: antes.id,
       user: { ...jefe, permissions: jefe.permissions.filter((p) => p !== 'room.status') },
       details: [{ fieldCode: 'cerraduras', value: 'Falla' }],
     });
-    assert.equal(getRoomByNumber('1002').status_code, 'FUERA_SERVICIO');
+    assert.equal(getRoomByNumber('1002').status_code, antes.status_code);
+    assert.equal(pendientes(1002), 1);
+  });
+
+  test('fuera de servicio sigue siendo una decisión de quien opera', () => {
+    // La acción existe y cambia el estado: es para el problema grave, el que
+    // va a durar un día o más.
+    const res = mov(1003, 'mantenimiento', 'OUT_OF_SERVICE',
+      'Fuga en el muro; la reparación lleva dos días.', { guestPresent: 'no' });
+    assert.equal(res.room.status_code, 'FUERA_SERVICIO');
   });
 });
 
@@ -1047,10 +1087,11 @@ describe('Incidencias abiertas por reporte', () => {
     assert.equal(abiertas(), antes);
   });
 
-  test('devolver la habitación al servicio también cierra lo pendiente', () => {
-    // Se usa un daño (categoría Ama de Llaves), no un reporte a Mantenimiento
-    // o a Sistemas: esas áreas impiden devolver la habitación al servicio, así
-    // que con ellas este camino no existe.
+  test('devolver la habitación al servicio NO cierra lo pendiente', () => {
+    // Lo cerraba cuando un reporte sacaba la habitación de servicio: volver al
+    // servicio significaba entonces que el problema estaba resuelto. Desde que
+    // el reporte no mueve el estado, una habitación puede estar a la venta con
+    // su reporte abierto, y cerrarlo por el estado borraría trabajo sin hacerlo.
     const room = getRoomByNumber('604');
     recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
     const antes = abiertas();
@@ -1058,9 +1099,12 @@ describe('Incidencias abiertas por reporte', () => {
     assert.equal(abiertas(), antes + 1);
     recordMovement({
       roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE_LIMPIO',
-      comment: 'Se resolvió sin registrar la acción.',
+      comment: 'La habitación se limpió; el daño sigue reportado.',
     });
-    assert.equal(abiertas(), antes, 'si volvió a estar lista, no queda nada pendiente');
+    assert.equal(abiertas(), antes + 1, 'el pendiente sigue contando hasta que alguien lo cierre');
+    // Y se cierra cuando alguien lo cierra de verdad.
+    mov(604, 'supervisor', 'RELEASE', 'Cabecera cambiada.');
+    assert.equal(abiertas(), antes);
   });
 
   test('una observación no cierra nada', () => {
@@ -1136,13 +1180,13 @@ describe('Estados de Arpón y el dato del huésped', () => {
     const room = getRoomByNumber('504');
     const res = recordMovement({
       roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
-      comment: 'La TV no enciende.', guestPresent: 'no', guestPresent: 'si',
+      comment: 'La TV no enciende.', guestPresent: 'si',
     });
     const m = one('SELECT * FROM movements WHERE id = @id', { id: res.primaryId });
     assert.equal(m.guest_present, 'si');
-    // El dato viaja con el reporte; lo que mueve el estado es que la
-    // habitación estuviera a la venta con un pendiente abierto.
-    assert.equal(res.room.status_code, 'FUERA_SERVICIO');
+    // El dato viaja con el reporte y no mueve nada más: la habitación se
+    // queda donde estaba, con su pendiente abierto.
+    assert.equal(res.room.status_code, room.status_code);
   });
 
   test('un reporte sin ese dato se rechaza', () => {
@@ -1177,13 +1221,21 @@ describe('Estados de Arpón y el dato del huésped', () => {
       'el dato sólo tiene sentido donde se pregunta');
   });
 
-  test('el reporte sigue impidiendo que la habitación quede a la venta', () => {
-    // El reporte ya no mueve el estado; la garantía la da la incidencia abierta.
+  test('la limpieza termina aunque haya un reporte abierto', () => {
+    // El caso del piso: sale el huésped, Ama de Llaves encuentra la TV sin
+    // señal y la reporta, y luego termina la limpieza. La limpieza se registra
+    // y la habitación queda lista; el reporte sigue abierto y a la vista.
     const room = getRoomByNumber('508');
+    recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
     recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'SYS_REPORT',
-      comment: 'Caja fuerte trabada.', guestPresent: 'no', guestPresent: 'no' });
+      comment: 'Caja fuerte trabada.', guestPresent: 'no' });
+    const r = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.equal(r.room.status_code, 'DISPONIBLE_LIMPIO');
+    assert.equal(stats.openIncidentsForRoom(room.id).length, 1, 'el reporte no se cierra solo');
+    // Lo que no se puede es darlo por resuelto sin atenderlo.
     assert.throws(
-      () => recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'DISPONIBLE_LIMPIO' }),
+      () => recordMovement({ roomId: room.id, user: user('supervisor'),
+        movementTypeCode: 'RELEASE', comment: 'Va.' }),
       (e) => e.status === 409 && /sin cerrar/.test(e.message));
   });
 

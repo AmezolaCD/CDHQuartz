@@ -205,7 +205,8 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.tl-card');
     const linea = await page.locator('.timeline').textContent();
     assert.match(linea, /Reportar mantenimiento/);
-    assert.match(linea, /Fuera de servicio/, 'el cambio de estado debe verse en el historial');
+    assert.ok(!/Fuera de servicio/.test(linea),
+      'un reporte no saca la habitación de servicio: eso lo decide quien opera');
     assert.match(linea, /El huésped estaría en la habitación/,
       'el historial conserva lo que el reporte dijo del huésped');
     await page.close();
@@ -387,19 +388,20 @@ describe('Recorrido de operación', () => {
     await page.locator('.modal-foot [type=submit]').click();
     await page.waitForSelector('.toast.error', { timeout: 10000 });
     const aviso = await page.locator('.toast.error').textContent();
-    assert.match(aviso, /no puede quedar como/);
+    assert.match(aviso, /no se puede liberar/);
     assert.match(aviso, /Caja fuerte trabada/);
     await page.close();
   });
 
-  test('marcar un campo en falla retira la habitación de la venta', async () => {
+  test('un campo en falla deja "Reporte abierto" en el rack, no fuera de servicio', async () => {
     const { page } = await abrirSesion();
     await page.evaluate(() => { location.hash = '#/pisos'; });
     await page.waitForSelector('.rack-grid');
 
     const tarjeta = page.locator('.room:not(.inactive)').nth(7);
     const numero = (await tarjeta.locator('.num').textContent()).trim();
-    assert.match(await tarjeta.locator('.st').textContent(), /Disponible limpio/);
+    const estado = (await tarjeta.locator('.st').textContent()).trim();
+    assert.match(estado, /Disponible limpio/);
 
     await tarjeta.click();
     await page.waitForSelector('.drawer.open');
@@ -415,7 +417,14 @@ describe('Recorrido de operación', () => {
     await page.waitForTimeout(1200);
 
     const chip = await page.locator('.drawer .chip').first().textContent();
-    assert.match(chip, /Fuera de servicio/, `la habitación ${numero} quedó en "${chip.trim()}"`);
+    assert.match(chip, /Disponible limpio/,
+      `la habitación ${numero} debe conservar su estado y quedó en "${chip.trim()}"`);
+
+    // Y en el rack se ve la leyenda, que es lo que avisa a quien hace la ronda.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(1000);
+    const leyenda = await tarjeta.locator('.flag.inc').textContent();
+    assert.match(leyenda, /Reporte abierto/, `la tarjeta dice "${leyenda.trim()}"`);
     await page.close();
   });
 

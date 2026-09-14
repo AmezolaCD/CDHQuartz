@@ -122,10 +122,14 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .room .st{display:block;font-size:10.5px;font-weight:600;color:var(--st);line-height:1.25;
   overflow-wrap:break-word}
 .room .st svg{display:inline;vertical-align:-2px;margin-right:3px}
-.room .flags{display:flex;gap:4px;align-items:center;min-height:16px}
+.room .flags{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:16px}
 .room.inactive{opacity:.5;background:var(--surface-2)}
 .flag{display:inline-flex;align-items:center;gap:2px;padding:1px 5px;border-radius:5px;font-size:10px;font-weight:700;line-height:1.5}
-.flag.inc{background:var(--danger-bg);color:var(--danger)}
+/* "Reporte abierto" no cabe en una línea de tarjeta: se parte en vez de
+   recortarse. Media leyenda no dice nada, y ya nos pasó con los estados. */
+.flag.inc{background:var(--danger-bg);color:var(--danger);align-items:flex-start;max-width:100%}
+.flag.inc > span{overflow-wrap:break-word;min-width:0;text-align:left}
+.flag.inc svg{flex:none;margin-top:2px}
 .flag.rec{background:var(--warn-bg);color:var(--warn)}
 .flag.att{background:var(--info-bg);color:var(--info)}
 .flag.solicitud{color:var(--pr);border:1px solid var(--pr);background:transparent}

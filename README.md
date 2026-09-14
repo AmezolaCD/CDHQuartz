@@ -382,23 +382,29 @@ subir—, no como una propiedad permanente de la habitación.
 movimientos pero cuenta como **una** incidencia: la reincidencia agrupa por
 `batch_id`, no por filas.
 
-**No se libera una habitación con un pendiente abierto.** Mientras Mantenimiento
-o Sistemas tengan algo sin cerrar en esa habitación —un reporte o un campo en
-falla— no puede pasar a *Disponible* ni a *Inspeccionada*, ni desde la acción
-rápida, ni cambiando el estado a mano, ni en un cambio en bloque. Limpiar,
-comentar y reportar siguen siendo posibles. Qué áreas bloquean se configura por
-categoría (`blocks_release`).
+**Un reporte no saca la habitación de servicio.** Ni una acción de reporte ni un
+campo marcado en falla mueven el estado: abren su pendiente y dejan la
+habitación donde estaba, marcada en el rack con **«Reporte abierto»**. *Fuera de
+servicio* es para el problema grave, el que dura un día o más, y es una decisión
+de quien opera: tiene su propia acción. El mecanismo anterior sigue disponible,
+apagado, por si el hotel quiere recuperarlo en alguna categoría
+(`pending_status_id`, desde Administración).
 
-**Una falla retira la habitación de la venta.** Marcar un campo de Mantenimiento
-o Sistemas en un valor de incidencia sobre una habitación en servicio la pasa al
-estado pendiente de esa área en el mismo movimiento, con su registro en el
-historial. Corregir el campo no la devuelve sola: hay que liberarla.
+**No se libera una habitación con un pendiente abierto.** «Liberar habitación»
+da por resueltos todos los pendientes de esa habitación, así que se rechaza
+mientras Mantenimiento o Sistemas tengan algo sin cerrar —un reporte o un campo
+en falla—, tanto desde la acción rápida como en un cambio en bloque, donde una
+sola habitación detiene el lote entero. Lo vigilado es el cierre, no el estado:
+limpiar, comentar, reportar, cambiar el estado a mano y cerrar lo de su propia
+área siguen siendo posibles, y **volver a un estado de venta ya no cierra
+ningún pendiente** —seguirá abierto y a la vista hasta que alguien lo cierre—.
+Qué áreas bloquean se configura por categoría (`blocks_release`).
 
 **Una incidencia abierta es trabajo pendiente, venga de donde venga.** Cuenta
 tanto un campo en valor de incidencia (*Plomería: Falla*) como un reporte que
-nadie ha cerrado. Un reporte se cierra con la acción de cierre de su área, con
-«Liberar habitación», o al devolver la habitación a un estado de servicio —
-nunca borrando nada.
+nadie ha cerrado. Un reporte se cierra con la acción de cierre de su área o con
+«Liberar habitación» —nunca borrando nada, y nunca por el simple hecho de que
+la habitación vuelva a estar a la venta.
 
 **Cambios en bloque sin perder trazabilidad.** Aplicar una acción a varias
 habitaciones a la vez no crea un movimiento compartido: cada habitación

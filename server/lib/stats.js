@@ -25,10 +25,14 @@ const OPEN_INCIDENTS_SQL = `
  *
  *   · una acción de cierre de su misma área ("Mantenimiento completado");
  *   · una acción de cierre de alcance `habitacion` ("Liberar habitación"),
- *     que resuelve todo lo pendiente de esa habitación;
- *   · un cambio de estado que devuelve la habitación al servicio (cualquier
- *     estado marcado con `counts_ready`): si volvió a estar lista, no queda
- *     nada pendiente que contar.
+ *     que resuelve todo lo pendiente de esa habitación.
+ *
+ * Volver a un estado de venta ya NO la cierra. Lo hacía cuando un reporte
+ * sacaba la habitación de servicio: regresar al servicio significaba entonces
+ * que el problema estaba resuelto. Desde que el reporte no mueve el estado,
+ * una habitación puede estar "Disponible limpio" con su reporte abierto —eso
+ * es justo lo que anuncia la leyenda del rack—, y cerrarlo por el estado
+ * borraría el pendiente sin que nadie lo hubiera atendido.
  *
  * Los movimientos de campo se excluyen: el valor actual del campo ya los
  * representa en la consulta anterior, y contarlos aquí sería contarlos dos
@@ -50,15 +54,11 @@ const OPEN_REPORT_INCIDENTS_SQL = `
        SELECT 1
          FROM movements x
          LEFT JOIN movement_types xt ON xt.id = x.movement_type_id
-         LEFT JOIN room_statuses xs ON xs.id = x.new_status_id
         WHERE x.room_id = m.room_id
           AND x.id > m.id
-          AND (
-            (x.closes_incident = 1
-              AND (COALESCE(xt.closes_scope, 'categoria') = 'habitacion'
-                   OR x.category_id IS m.category_id))
-            OR (x.new_status_id IS NOT x.old_status_id AND xs.counts_ready = 1)
-          ))`;
+          AND x.closes_incident = 1
+          AND (COALESCE(xt.closes_scope, 'categoria') = 'habitacion'
+               OR x.category_id IS m.category_id))`;
 
 export function openIncidents() {
   return [...all(OPEN_INCIDENTS_SQL), ...all(OPEN_REPORT_INCIDENTS_SQL)];

@@ -251,6 +251,11 @@ CREATE TABLE IF NOT EXISTS categories (
   blocks_release INTEGER NOT NULL DEFAULT 0,
   -- Estado al que pasa una habitación EN SERVICIO cuando esta área le detecta
   -- una falla. Sin él, marcar "Plomería: Falla" dejaba la habitación a la venta.
+  -- A dónde pasa la habitación cuando se reporta algo de esta categoría.
+  -- VACÍO —lo normal— significa que el reporte NO mueve el estado: abre la
+  -- alerta y la habitación queda marcada con "Reporte abierto". Fuera de
+  -- servicio es una decisión de quien opera, para un problema que dura un día
+  -- o más, no algo que el sistema decida por un reporte.
   pending_status_id INTEGER REFERENCES room_statuses(id),
   sort_order    INTEGER NOT NULL DEFAULT 0,
   active        INTEGER NOT NULL DEFAULT 1

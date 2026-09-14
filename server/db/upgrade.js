@@ -165,6 +165,32 @@ const CORRECTIVOS = [
     },
   },
   {
+    // Un reporte dejaba la habitación "Fuera de servicio". No es lo que pasa
+    // en el piso: fuera de servicio se deja una habitación con un problema
+    // grave, que va a durar un día o más, y ésa es una decisión de quien
+    // opera. Un reporte corriente abre su alerta y deja la habitación con la
+    // leyenda "Reporte abierto", en el estado que tenía.
+    id: 'reporte-no-saca-de-servicio',
+    titulo: 'El reporte deja de sacar la habitación de servicio',
+    porque: 'fuera de servicio es una decisión de quien opera, no algo que el sistema decida por un reporte',
+    grupo: 'La categoría deja de mandar fuera de servicio',
+    aplicar() {
+      const hechas = [];
+      // Sólo las categorías que el catálogo declara SIN destino: si el hotel
+      // le puso uno a otra categoría, esa decisión es suya.
+      for (const c of CATEGORIES.filter((x) => !x.pending_status)) {
+        const fila = one(`SELECT t.id, t.name, s.name AS destino
+                            FROM categories t
+                            LEFT JOIN room_statuses s ON s.id = t.pending_status_id
+                           WHERE t.code = @code AND t.pending_status_id IS NOT NULL`, { code: c.code });
+        if (!fila) continue;
+        db.prepare('UPDATE categories SET pending_status_id = NULL WHERE id = @id').run({ id: fila.id });
+        hechas.push({ resumen: `${fila.name}: ya no manda a ${fila.destino}`, categoria: c.code });
+      }
+      return hechas;
+    },
+  },
+  {
     id: 'permisos-tardios-al-rol',
     titulo: 'Permisos que el catálogo añadió a un rol del sistema',
     porque: 'el permiso ya existía cuando el catálogo se lo asignó al rol, así que la puesta al día no se lo repartía',
