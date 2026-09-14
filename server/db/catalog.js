@@ -165,22 +165,42 @@ export const CATEGORIES = [
 // Los reportes NO mueven el estado: el estado lo manda Ama de Llaves y refleja
 // el ciclo de limpieza del PMS. Un reporte abierto ya impide por sí solo que
 // la habitación quede disponible, así que no hace falta un estado para eso.
+/**
+ * Grupos de la pantalla «Registrar». No cambian lo que hace una acción: sólo
+ * ordenan quince botones sueltos en el orden del trabajo —limpieza, huésped,
+ * reportes, cierres, constancia— para que buscar deje de ser adivinar.
+ *
+ * `one_entry` es el caso de los reportes: se muestran como UNA sola tarjeta y
+ * el área se elige después. Reportar es un solo gesto; a quién va, un dato de
+ * ese gesto, no cinco botones que hay que saber distinguir de antemano.
+ */
+export const ACTION_GROUPS = [
+  { code: 'LIMPIEZA', name: 'Limpieza',            icon: 'sparkles',    sort_order: 1 },
+  { code: 'HUESPED',  name: 'Huésped',             icon: 'user',        sort_order: 2 },
+  { code: 'REPORTE',  name: 'Reportar un problema', icon: 'alert',      sort_order: 3,
+    one_entry: 1, entry_name: 'Reportar',
+    entry_hint: 'Mantenimiento, Sistemas o Ama de Llaves',
+    pick_title: '¿A qué área va el reporte?' },
+  { code: 'CIERRE',   name: 'Cerrar y liberar',    icon: 'check-circle', sort_order: 4 },
+  { code: 'REGISTRO', name: 'Dejar constancia',    icon: 'note',        sort_order: 5 },
+];
+
 export const MOVEMENT_TYPES = [
-  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:null, target_from_clean:1, icon:'sparkles', is_quick_action:1, closes_cleaning_request:1, sort_order:1 },
-  { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:null,                  icon:'clipboard',    is_quick_action:1, sort_order:2 },
-  { code:'GUEST_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:'SALIDA',              icon:'logout',       is_quick_action:1, warns_pms:1, sort_order:3 },
-  { code:'DELIVER',     name:'Entregar habitación',     category:'OTROS',target_status:'ENTRADA_NUEVA',       icon:'door',         is_quick_action:1, warns_pms:1, sort_order:4 },
-  { code:'GUEST_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:'OCUPADO_LIMPIO',      icon:'user',         is_quick_action:1, warns_pms:1, sort_order:5 },
-  { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:null,                  icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:5 },
-  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:6 },
-  { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:null,                  icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:7 },
-  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, sort_order:8 },
-  { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:null,                  icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, asks_guest_present:1, sort_order:9 },
-  { code:'DISCREPANCY', name:'Reportar discrepancia',   category:'AMA',  target_status:'DISCREPANCIA',        icon:'alert',        is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:10 },
-  { code:'OUT_OF_SERVICE', name:'Marcar fuera de servicio', category:'MTTO', target_status:'FUERA_SERVICIO',  icon:'ban',          is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, sort_order:11 },
-  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE_LIMPIO',   icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', sort_order:12 },
-  { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, sort_order:13 },
-  { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, sort_order:14 },
+  { code:'CLEAN_DONE',  name:'Limpieza terminada',      category:'AMA',  target_status:null, target_from_clean:1, icon:'sparkles', is_quick_action:1, closes_cleaning_request:1, action_group:'LIMPIEZA', sort_order:1 },
+  { code:'INSPECTION',  name:'Inspección',              category:'AMA',  target_status:null,                  icon:'clipboard',    is_quick_action:1, action_group:'LIMPIEZA', sort_order:2 },
+  { code:'DELIVER',     name:'Entregar habitación',     category:'OTROS',target_status:'ENTRADA_NUEVA',       icon:'door',         is_quick_action:1, warns_pms:1, action_group:'HUESPED', sort_order:3 },
+  { code:'GUEST_IN',    name:'Entrada de huésped',      category:'OTROS',target_status:'OCUPADO_LIMPIO',      icon:'user',         is_quick_action:1, warns_pms:1, action_group:'HUESPED', sort_order:4 },
+  { code:'GUEST_OUT',   name:'Salida de huésped',       category:'OTROS',target_status:'SALIDA',              icon:'logout',       is_quick_action:1, warns_pms:1, action_group:'HUESPED', sort_order:5 },
+  { code:'MAINT_REPORT',name:'Reportar mantenimiento',  category:'MTTO', target_status:null,                  icon:'wrench',       is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, action_group:'REPORTE', sort_order:6 },
+  { code:'OUT_OF_SERVICE', name:'Marcar fuera de servicio', category:'MTTO', target_status:'FUERA_SERVICIO',  icon:'ban',          is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, action_group:'REPORTE', sort_order:7 },
+  { code:'SYS_REPORT',  name:'Reportar a Sistemas',     category:'SIS',  target_status:null,                  icon:'wifi',         is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, action_group:'REPORTE', sort_order:8 },
+  { code:'DAMAGE',      name:'Reportar daño',           category:'AMA',  target_status:null,                  icon:'alert',        is_quick_action:1, is_incident:1, severity:'critica', requires_comment:1, notify:1, asks_guest_present:1, action_group:'REPORTE', sort_order:9 },
+  { code:'DISCREPANCY', name:'Reportar discrepancia',   category:'AMA',  target_status:'DISCREPANCIA',        icon:'alert',        is_quick_action:1, is_incident:1, severity:'alta', requires_comment:1, notify:1, cross_department:1, asks_guest_present:1, action_group:'REPORTE', sort_order:10 },
+  { code:'MAINT_DONE',  name:'Mantenimiento completado',category:'MTTO', target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, action_group:'CIERRE', sort_order:11 },
+  { code:'SYS_DONE',    name:'Sistemas completado',     category:'SIS',  target_status:null,                  icon:'check-circle', is_quick_action:1, closes_incident:1, notify:1, action_group:'CIERRE', sort_order:12 },
+  { code:'RELEASE',     name:'Liberar habitación',      category:'OTROS',target_status:'DISPONIBLE_LIMPIO',   icon:'unlock',       is_quick_action:1, closes_incident:1, closes_scope:'habitacion', action_group:'CIERRE', sort_order:13 },
+  { code:'NOTE',        name:'Agregar observación',     category:'OTROS',target_status:null,                  icon:'note',         is_quick_action:1, requires_comment:1, action_group:'REGISTRO', sort_order:14 },
+  { code:'PHOTO',       name:'Agregar foto',            category:'OTROS',target_status:null,                  icon:'camera',       is_quick_action:1, requires_photo:1, action_group:'REGISTRO', sort_order:15 },
   // Las solicitudes de limpieza no son acciones rápidas: se piden desde el
   // centro de solicitudes o desde el expediente, que es donde se elige la
   // prioridad. Existen como tipo para que cada cambio deje su movimiento.

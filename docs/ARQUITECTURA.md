@@ -249,6 +249,31 @@ Tres decisiones de esa regla:
 Corregir el campo **no** devuelve sola la habitación al servicio: alguien tiene
 que liberarla, que es justo el paso que la regla anterior custodia.
 
+## La pantalla de registrar
+
+Quince acciones sueltas en una rejilla obligan a leerlas todas para encontrar
+una. Ahora van en grupos (`ACTION_GROUPS`) que siguen el orden del trabajo, y
+la acción dice a cuál pertenece con `movement_types.action_group`.
+
+Los grupos viajan con las acciones desde el servidor: la interfaz pinta lo que
+le llega, en el orden en que le llega, sin saberse ninguna lista. De ahí salen
+tres propiedades que no hay que programar aparte: un grupo sin acciones
+visibles no se pinta —quien no puede reportar no ve la sección de reportes—,
+una acción que el hotel cree desde Administración aparece igual (cae en «Otras
+acciones» si no declara grupo), y mover una acción de sección es editar un
+campo, no desplegar.
+
+`one_entry` es el caso de los reportes. Los cinco —mantenimiento, fuera de
+servicio, Sistemas, daño y discrepancia— se muestran como **una sola tarjeta**,
+y el área se elige dentro. Reportar es un gesto; a quién va, un dato de ese
+gesto. Las áreas que se ofrecen salen de la categoría de cada acción y de los
+permisos de quien mira, así que no hay ninguna lista de departamentos escrita
+en la interfaz.
+
+Nada de esto cambia lo que una acción hace: el grupo es presentación, y
+`recordMovement` no lo lee. Por eso se pudo reordenar la pantalla entera sin
+tocar la puerta de escritura.
+
 ## Extensión sin código
 
 Desde Administración se pueden agregar pisos, habitaciones, estados,

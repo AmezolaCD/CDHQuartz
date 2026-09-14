@@ -217,6 +217,23 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .quick button[data-severity="critica"]{border-left:3px solid var(--danger)}
 .quick button[data-severity="alta"]{border-left:3px solid var(--warn)}
 
+/* Grupos de la pantalla "Registrar": el orden del trabajo, no el de la base.
+   El título es un rótulo pequeño; lo que se mira son los botones. */
+.grupo + .grupo{margin-top:15px}
+.grupo h3{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:11px;font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.grupo h3 svg{color:var(--ink-4)}
+/* La entrada única —reportar— ocupa la fila entera: es una sola decisión, no
+   una más entre varias, y el área se elige dentro. */
+.quick button.entrada{grid-column:1/-1;flex-direction:row;align-items:center;gap:11px;
+  border-color:var(--plum-100);background:var(--plum-050);box-shadow:inset 3px 0 0 var(--plum-500)}
+.quick button.entrada .qn{font-size:14px}
+.quick button.entrada .qs{margin-left:auto;text-align:right}
+
+/* Selector de área del reporte. */
+.areas .area + .area{margin-top:13px}
+.areas h4{margin:0 0 7px;font-size:12px;font-weight:700;color:var(--ink-2)}
+
 /* ------------------------------------------------------------ formularios */
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:13px}
 .field > label{font-size:12px;font-weight:650;color:var(--ink-2);display:flex;align-items:center;gap:6px}

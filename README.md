@@ -338,6 +338,14 @@ del hotel.
 escriben en categorías de su departamento o en categorías generales. Ama de
 Llaves no puede tocar campos de Sistemas, y viceversa.
 
+**Registrar, en el orden del trabajo.** Las acciones rápidas van agrupadas —
+*Limpieza*, *Huésped*, *Reportar un problema*, *Cerrar y liberar*, *Dejar
+constancia*— en vez de quince botones sueltos. **Reportar es una sola entrada**:
+se pulsa una vez y ahí dentro se elige el área (Mantenimiento, Sistemas o Ama
+de Llaves). Saber a quién va el reporte es un dato del reporte, no algo que
+haya que distinguir entre cinco botones parecidos antes de empezar. El grupo de
+cada acción se edita desde *Administración › Tipos de movimiento*.
+
 **Los estados son los de Arpón**, el PMS del hotel, con sus mismos nombres:
 *Disponible limpio*, *Entrada nueva*, *Ocupado limpio*, *Ocupado sucio*,
 *Salida*, *Discrepancia* y *Fuera de servicio*. El rack del CDH y la pantalla

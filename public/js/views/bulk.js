@@ -29,11 +29,18 @@ export function bulkPiso(floorId) {
 
 let cacheAcciones = null;
 async function acciones() {
-  if (!cacheAcciones) cacheAcciones = (await api.get('/api/rooms/meta/quick-actions')).actions;
+  if (!cacheAcciones) cacheAcciones = await api.get('/api/rooms/meta/quick-actions');
   // Una fotografía es evidencia de UNA habitación concreta, y si el huésped
   // estará dentro se responde habitación por habitación: ninguna de las dos
   // cosas se replica en un lote, así que esas acciones quedan fuera.
-  return cacheAcciones.filter((a) => !a.requiresPhoto && !a.asksGuestPresent);
+  const lista = cacheAcciones.actions.filter((a) => !a.requiresPhoto && !a.asksGuestPresent);
+  // El lote se agrupa igual que la pantalla "Registrar": quien opera ve los
+  // mismos nombres en el mismo orden, aquí y allá. Un grupo que se quedó sin
+  // acciones aplicables en bloque no se ofrece.
+  const grupos = cacheAcciones.groups
+    .map((g) => ({ ...g, acciones: lista.filter((a) => g.actions.includes(a.code)) }))
+    .filter((g) => g.acciones.length);
+  return { lista, grupos };
 }
 export const bulkResetAcciones = () => { cacheAcciones = null; };
 
@@ -47,7 +54,7 @@ export const bulkResetAcciones = () => { cacheAcciones = null; };
  * @param {Function} onDone   se llama tras aplicar el lote
  */
 export async function montarBarraBloque(caja, rack, rooms, onDone) {
-  const lista = await acciones();
+  const { lista, grupos } = await acciones();
   const estados = state.statuses ?? [];
   const puedeEstado = can('room.status');
   const tope = state.hotel?.bulkMaxRooms ?? 40;
@@ -75,11 +82,12 @@ export async function montarBarraBloque(caja, rack, rooms, onDone) {
           <label>Acción</label>
           <select name="accion" required>
             <option value="">Elija la acción a aplicar…</option>
-            ${lista.map((a) => `<option value="mt:${esc(a.code)}">${esc(a.name)}${
-              // Sólo se anuncia el destino cuando aporta algo: "Limpieza
-              // terminada → Limpieza terminada" no dice nada.
-              a.target_status_name && a.target_status_name !== a.name
-                ? ` → ${esc(a.target_status_name)}` : ''}</option>`).join('')}
+            ${grupos.map((g) => `<optgroup label="${esc(g.name)}">${g.acciones.map((a) =>
+              `<option value="mt:${esc(a.code)}">${esc(a.name)}${
+                // Sólo se anuncia el destino cuando aporta algo: "Limpieza
+                // terminada → Limpieza terminada" no dice nada.
+                a.target_status_name && a.target_status_name !== a.name
+                  ? ` → ${esc(a.target_status_name)}` : ''}</option>`).join('')}</optgroup>`).join('')}
             ${puedeEstado ? `<optgroup label="Cambiar estado directamente">${estados.map((s) =>
               `<option value="st:${esc(s.code)}">Marcar como ${esc(s.name)}</option>`).join('')}</optgroup>` : ''}
           </select>

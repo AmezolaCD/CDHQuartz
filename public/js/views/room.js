@@ -8,7 +8,7 @@ import { state, can } from '../store.js';
 
 let quickActionsCache = null;
 async function quickActions() {
-  if (!quickActionsCache) quickActionsCache = (await api.get('/api/rooms/meta/quick-actions')).actions;
+  if (!quickActionsCache) quickActionsCache = await api.get('/api/rooms/meta/quick-actions');
   return quickActionsCache;
 }
 export const resetQuickActions = () => { quickActionsCache = null; };
@@ -242,23 +242,49 @@ async function actionPanel(panel, data, reload) {
     panel.innerHTML = emptyState('Su rol no tiene permiso para registrar movimientos.', 'lock');
     return;
   }
-  const actions = await quickActions();
+  const { actions, groups } = await quickActions();
   panel.innerHTML = '';
+  const porCodigo = (code) => actions.find((a) => a.code === code);
+  const abrir = (code) => actionForm(room, porCodigo(code), reload, data.pmsNotice);
 
   const grid = el(`<div class="card"><div class="card-head"><h2>Acciones rápidas</h2></div>
-    <div class="card-body"><div class="quick"></div></div></div>`);
-  const q = $('.quick', grid);
-  for (const a of actions) {
-    q.appendChild(el(`<button data-action="${esc(a.code)}" data-severity="${esc(a.severity)}">
-      <span style="color:var(--plum-600)">${icon(a.icon, 19)}</span>
-      <span class="qn">${esc(a.name)}</span>
-      <span class="qs">${a.target_from_clean ? '→ según el estado actual'
-        : a.target_status_name ? `→ ${esc(a.target_status_name)}` : 'Sin cambio de estado'}</span>
-    </button>`));
+    <div class="card-body"></div></div>`);
+  const cuerpo = $('.card-body', grid);
+
+  for (const g of groups) {
+    const seccion = el(`<section class="grupo">
+      <h3>${icon(g.icon, 14)}${esc(g.name)}</h3>
+      <div class="quick"></div>
+    </section>`);
+    const q = $('.quick', seccion);
+
+    // Un grupo de entrada única —los reportes— es UNA tarjeta: el área se
+    // elige después, dentro del propio gesto de reportar.
+    if (g.oneEntry) {
+      q.appendChild(el(`<button class="entrada" data-group="${esc(g.code)}">
+        <span style="color:var(--plum-600)">${icon(g.icon, 19)}</span>
+        <span class="qn">${esc(g.entryName)}</span>
+        <span class="qs">${esc(g.entryHint ?? '')}</span>
+      </button>`));
+    } else {
+      for (const code of g.actions) {
+        const a = porCodigo(code);
+        q.appendChild(el(`<button data-action="${esc(a.code)}" data-severity="${esc(a.severity)}">
+          <span style="color:var(--plum-600)">${icon(a.icon, 19)}</span>
+          <span class="qn">${esc(a.name)}</span>
+          <span class="qs">${a.target_from_clean ? '→ según el estado actual'
+            : a.target_status_name ? `→ ${esc(a.target_status_name)}` : 'Sin cambio de estado'}</span>
+        </button>`));
+      }
+    }
+    cuerpo.appendChild(seccion);
   }
-  q.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-action]');
-    if (btn) actionForm(room, actions.find((a) => a.code === btn.dataset.action), reload, data.pmsNotice);
+
+  cuerpo.addEventListener('click', (e) => {
+    const accion = e.target.closest('[data-action]');
+    if (accion) return abrir(accion.dataset.action);
+    const grupo = e.target.closest('[data-group]');
+    if (grupo) elegirArea(groups.find((g) => g.code === grupo.dataset.group), actions, abrir);
   });
   panel.appendChild(grid);
 
@@ -337,6 +363,50 @@ async function actionPanel(panel, data, reload) {
 }
 
 /** Formulario de acción: el usuario sólo elige detalle, comentario y fotos. */
+/**
+ * Paso previo de un grupo de entrada única: a quién va el reporte.
+ *
+ * Las áreas salen de la categoría de cada acción, no de una lista escrita
+ * aquí: si mañana se añade un área desde Administración, aparece sola. Y sólo
+ * se ofrecen las acciones que el usuario puede registrar, que son las que el
+ * servidor mandó.
+ */
+function elegirArea(grupo, actions, abrir) {
+  const suyas = grupo.actions.map((code) => actions.find((a) => a.code === code));
+  const areas = [];
+  for (const a of suyas) {
+    const nombre = a.category_name ?? 'Sin área';
+    const area = areas.find((x) => x.nombre === nombre) ?? (areas.push({ nombre, acciones: [] }), areas.at(-1));
+    area.acciones.push(a);
+  }
+
+  const m = modal({
+    title: grupo.pickTitle ?? grupo.name,
+    body: `<div class="areas">${areas.map((area) => `
+      <div class="area">
+        <h4>${esc(area.nombre)}</h4>
+        <div class="quick">${area.acciones.map((a) => `
+          <button data-action="${esc(a.code)}" data-severity="${esc(a.severity)}">
+            <span style="color:var(--plum-600)">${icon(a.icon, 19)}</span>
+            <span class="qn">${esc(a.name)}</span>
+            <span class="qs">${a.target_status_name ? `→ ${esc(a.target_status_name)}` : 'Sin cambio de estado'}</span>
+          </button>`).join('')}</div>
+      </div>`).join('')}</div>
+      <div class="readonly-note" style="margin-top:12px">${icon('user', 14)}
+        <span>Se le preguntará si el huésped estará en la habitación: es lo que el área
+        necesita saber antes de subir.</span>
+      </div>`,
+    footer: '<button class="btn" data-close>Cancelar</button>',
+  });
+
+  $('.areas', m.wrap).addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    m.close();
+    abrir(btn.dataset.action);
+  });
+}
+
 function actionForm(room, action, reload, avisoPms = null) {
   const allowPhotos = action.allows_photo && can('photo.upload');
   const m = modal({

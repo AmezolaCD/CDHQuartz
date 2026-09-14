@@ -153,6 +153,9 @@ catalogResource('movement-types', {
   columns: {
     code: 'text', name: 'text', category_id: 'int', target_status_id: 'int',
     target_from_clean: 'bool', asks_guest_present: 'bool', icon: 'text',
+    // Grupo de la pantalla "Registrar": mueve la acción de sección sin tocar
+    // lo que hace. Vacío la manda a "Otras acciones".
+    action_group: 'text',
     severity: 'text', is_incident: 'bool', closes_incident: 'bool', closes_scope: 'text',
     requires_comment: 'bool',
     requires_photo: 'bool', allows_photo: 'bool', is_quick_action: 'bool',

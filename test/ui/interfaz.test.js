@@ -165,6 +165,19 @@ describe('Expediente de habitación', () => {
 });
 
 describe('Recorrido de operación', () => {
+  /**
+   * Reportar es UN gesto: la tarjeta única y, dentro, el área. Se usa en todas
+   * las pruebas que levantan un reporte, así que si el recorrido cambia, lo
+   * hace en un solo sitio.
+   */
+  async function reportar(page, accion) {
+    await page.waitForSelector('.quick button.entrada');
+    await page.locator('.quick button.entrada').click();
+    await page.waitForSelector('.areas');
+    await page.locator('.areas button', { hasText: accion }).click();
+    await page.waitForSelector('#actionForm');
+  }
+
   test('buscar "618" abre esa habitación', async () => {
     const { page } = await abrirSesion();
     await page.fill('#globalSearch', '618');
@@ -182,9 +195,7 @@ describe('Recorrido de operación', () => {
     await page.locator('.room').first().click();
     await page.waitForSelector('.drawer.open');
     await page.locator('.drawer [data-tab="accion"]').click();
-    await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Reportar mantenimiento' }).click();
-    await page.waitForSelector('#actionForm');
+    await reportar(page, 'Reportar mantenimiento');
     await page.check('#actionForm [name=guestPresent][value=si]');
     await page.fill('#actionForm [name=comment]', 'Prueba automatizada de interfaz.');
     await page.locator('.modal-foot [type=submit]').click();
@@ -266,9 +277,7 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.drawer.open');
     const numero = (await page.locator('.drawer h2').textContent()).replace(/\D/g, '');
     await page.locator('.drawer [data-tab="accion"]').click();
-    await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
-    await page.waitForSelector('#actionForm');
+    await reportar(page, 'Reportar a Sistemas');
     await page.check('#actionForm [name=guestPresent][value=si]');
     await page.fill('#actionForm [name=comment]', 'Televisión sin señal en el canal 5.');
     await page.locator('.modal-foot [type=submit]').click();
@@ -287,6 +296,68 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('Registrar agrupa por el orden del trabajo y reportar es una sola entrada', async () => {
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.locator('.room').nth(11).click();
+    await page.waitForSelector('.drawer.open');
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.grupo');
+
+    // Las secciones van en el orden del trabajo, no en el de la base.
+    const secciones = await page.locator('.grupo h3').allTextContents();
+    assert.deepEqual(secciones.map((t) => t.trim()),
+      ['Limpieza', 'Huésped', 'Reportar un problema', 'Cerrar y liberar', 'Dejar constancia']);
+
+    // Ningún reporte suelto: los cinco viven detrás de una sola tarjeta.
+    const sueltos = await page.locator('.quick button:not(.entrada) .qn').allTextContents();
+    assert.ok(!sueltos.some((t) => /Reportar|fuera de servicio/i.test(t)),
+      `los reportes no deben aparecer sueltos: ${sueltos.join(' | ')}`);
+    assert.equal(await page.locator('.quick button.entrada').count(), 1);
+
+    // Y dentro, el área: se elige a quién va antes de escribir nada.
+    await page.locator('.quick button.entrada').click();
+    await page.waitForSelector('.areas');
+    const areas = await page.locator('.areas h4').allTextContents();
+    assert.ok(areas.includes('Mantenimiento') && areas.includes('Sistemas'),
+      `debe poder elegirse el área: ${areas.join(' | ')}`);
+
+    await page.locator('.areas button', { hasText: 'Reportar mantenimiento' }).click();
+    await page.waitForSelector('#actionForm');
+    await page.check('#actionForm [name=guestPresent][value=no]');
+    await page.fill('#actionForm [name=comment]', 'La chapa de la puerta no cierra.');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+
+    await page.locator('.drawer [data-tab="historial"]').click();
+    await page.waitForSelector('.tl-card');
+    assert.match(await page.locator('.timeline').textContent(), /La chapa de la puerta no cierra/);
+    await page.close();
+  });
+
+  test('una sección sin acciones a la vista no se pinta', async () => {
+    // Recepción no registra limpiezas: esa sección no existe para ella, en vez
+    // de aparecer vacía. Y reportar sí, con las áreas que sí puede usar.
+    const { page } = await abrirSesion('recepcion');
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.locator('.room').nth(8).click();
+    await page.waitForSelector('.drawer.open');
+    await page.locator('.drawer [data-tab="accion"]').click();
+    await page.waitForSelector('.grupo');
+
+    const secciones = (await page.locator('.grupo h3').allTextContents()).map((t) => t.trim());
+    assert.ok(!secciones.includes('Limpieza'), `no debe pintarse una sección vacía: ${secciones.join(' | ')}`);
+    assert.ok(secciones.includes('Reportar un problema'), 'Recepción sí reporta a otras áreas');
+
+    await page.locator('.quick button.entrada').click();
+    await page.waitForSelector('.areas');
+    const areas = await page.locator('.areas h4').allTextContents();
+    assert.ok(areas.includes('Mantenimiento') && areas.includes('Sistemas'), areas.join(' | '));
+    await page.close();
+  });
+
   test('no deja liberar una habitación con un reporte abierto', async () => {
     const { page } = await abrirSesion();
     await page.evaluate(() => { location.hash = '#/pisos'; });
@@ -295,9 +366,7 @@ describe('Recorrido de operación', () => {
     await page.waitForSelector('.drawer.open');
 
     await page.locator('.drawer [data-tab="accion"]').click();
-    await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
-    await page.waitForSelector('#actionForm');
+    await reportar(page, 'Reportar a Sistemas');
     await page.check('#actionForm [name=guestPresent][value=no]');
     await page.fill('#actionForm [name=comment]', 'Caja fuerte trabada.');
     await page.locator('.modal-foot [type=submit]').click();
@@ -357,9 +426,7 @@ describe('Recorrido de operación', () => {
     await page.locator('.room:not(.inactive)').nth(10).click();
     await page.waitForSelector('.drawer.open');
     await page.locator('.drawer [data-tab="accion"]').click();
-    await page.waitForSelector('.quick button');
-    await page.locator('.quick button', { hasText: 'Reportar a Sistemas' }).click();
-    await page.waitForSelector('#actionForm');
+    await reportar(page, 'Reportar a Sistemas');
 
     // La pregunta está, y el formulario no se envía sin contestarla.
     assert.equal(await page.locator('#actionForm [name=guestPresent]').count(), 3);

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MOVEMENT_TYPES } from '../db/catalog.js';
+import { MOVEMENT_TYPES, ACTION_GROUPS } from '../db/catalog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(__dirname, '..', '..');
@@ -35,6 +35,22 @@ function banderaDeAccion(columna) {
       ? `UPDATE movement_types SET ${columna} = 1 WHERE code IN (${codes.join(', ')})`
       : null,
   };
+}
+
+/**
+ * Relleno del grupo de la pantalla «Registrar», también a partir del catálogo:
+ * la columna nace con las acciones ya creadas, así que sin esto una base en
+ * uso mostraría los quince botones sueltos, sin agrupar y sin la entrada única
+ * de los reportes.
+ */
+function grupoDeAccion() {
+  const porGrupo = ACTION_GROUPS.map((g) => {
+    const codes = MOVEMENT_TYPES.filter((m) => m.action_group === g.code).map((m) => `'${m.code}'`);
+    return codes.length
+      ? `UPDATE movement_types SET action_group = '${g.code}' WHERE code IN (${codes.join(', ')})`
+      : null;
+  }).filter(Boolean);
+  return { table: 'movement_types', column: 'action_group', ddl: 'TEXT', backfill: porGrupo.join(';\n') };
 }
 
 /**
@@ -112,6 +128,7 @@ export const COLUMNAS_NUEVAS = [
   { table: 'room_statuses', column: 'clean_status_id', ddl: 'INTEGER REFERENCES room_statuses(id)' },
   banderaDeAccion('closes_cleaning_request'),
   banderaDeAccion('warns_pms'),
+  grupoDeAccion(),
   {
     table: 'room_statuses',
     column: 'attention_weight',
