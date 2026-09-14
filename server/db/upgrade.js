@@ -10,7 +10,7 @@
 //   npm run upgrade -- --timezone=America/Tijuana
 //   npm run upgrade -- --promote=sistemas    da rol Administrador (recuperación)
 // ============================================================================
-import { db, migrate, one, all, insert, transaction } from '../lib/db.js';
+import { db, migrate, one, all, insert, transaction, COLUMNAS_NUEVAS } from '../lib/db.js';
 import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
@@ -142,7 +142,12 @@ const CORRECTIVOS = [
     porque: 'sus columnas nacieron con las acciones ya creadas, así que el valor del catálogo nunca les llegó',
     grupo: 'Bandera que no había llegado',
     aplicar() {
-      const columnas = ['target_from_clean', 'asks_guest_present', 'closes_cleaning_request', 'warns_pms'];
+      // Las banderas en riesgo son exactamente las columnas que se añadieron
+      // después: las del esquema original llegaron con la fila. La lista se
+      // deriva de COLUMNAS_NUEVAS para que una bandera futura entre sola.
+      const columnas = COLUMNAS_NUEVAS
+        .filter((c) => c.table === 'movement_types' && c.ddl === 'INTEGER NOT NULL DEFAULT 0')
+        .map((c) => c.column);
       const hechas = [];
       for (const m of MOVEMENT_TYPES) {
         const declara = columnas.filter((col) => m[col]);

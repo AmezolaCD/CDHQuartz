@@ -188,27 +188,15 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/anterior" "$BASE"
           ln -s "$PWD/node_modules" "$RUNNER_TEMP/anterior/node_modules"
 
-          # 1) Base sembrada y operada por la versión anterior.
+          # 1) Base sembrada y operada por la versión anterior. Los guiones
+          # viven en .github/scripts: dentro de `node -e "..."` cada comilla y
+          # cada acento grave hay que escaparlos, y un descuido no rompe la
+          # sintaxis —el shell ejecuta el resto como comandos— sino el trabajo
+          # entero, con un error que no se parece en nada a su causa.
+          GUIONES="$PWD/.github/scripts"
           ( cd "$RUNNER_TEMP/anterior"
             npm run seed --silent > /dev/null
-            node --input-type=module -e "
-              const { one, all } = await import('./server/lib/db.js');
-              const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
-              const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
-              const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
-              const u = withPermissions(findUserByUsername('supervisor'));
-              // Se opera con estados tomados del catálogo de ESA versión: una
-              // acción nombrada a mano deja de existir a la vuelta siguiente y
-              // rompe el montaje de la prueba, no lo que se quiere probar.
-              const estados = all('SELECT code FROM room_statuses WHERE active = 1 ORDER BY sort_order');
-              for (const numero of ['401', '402']) {
-                const hab = getRoomByNumber(numero);
-                const destino = estados.find((e) => e.code !== hab.status_code);
-                recordMovement({ roomId: hab.id, user: u, statusCode: destino.code,
-                  comment: 'Operación registrada antes de actualizar.' });
-              }
-              process.stdout.write(String(one('SELECT COUNT(*) n FROM movements').n));
-            " ) > "$RUNNER_TEMP/movimientos-antes.txt"
+            node "$GUIONES/operar-antes.mjs" ) > "$RUNNER_TEMP/movimientos-antes.txt"
           export ANTES="$(cat "$RUNNER_TEMP/movimientos-antes.txt")"
           echo "Movimientos registrados con la versión anterior: $ANTES"
 
@@ -232,75 +220,8 @@ jobs:
             *) echo "::error::la segunda pasada no es idempotente"; exit 1 ;;
           esac
 
-          # 4) El historial no se tocó, ninguna habitación quedó en un estado
-          # retirado y la operación sigue viva. Son invariantes que valen para
-          # cualquier versión: comprobar aquí algo propio de UNA —una columna,
-          # un código de acción— envejece y da un rojo falso a la siguiente.
-          node --input-type=module -e "
-            const { one, all } = await import('./server/lib/db.js');
-            const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
-            const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
-            const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
-            const fallo = (m) => { console.error('::error::' + m); process.exit(1); };
-
-            if (one('SELECT COUNT(*) n FROM movements').n !== Number(process.env.ANTES)) {
-              fallo('el historial cambió durante la puesta al día');
-            }
-            const huerfanas = one(\`
-              SELECT COUNT(*) AS n FROM rooms r
-                JOIN room_statuses s ON s.id = r.status_id
-               WHERE r.active = 1 AND s.active = 0\`).n;
-            if (huerfanas) fallo(huerfanas + ' habitaciones quedaron en un estado retirado');
-
-            // Un cambio de estado a un estado vigente, elegido del catálogo:
-            // así la prueba no nombra un código que mañana puede no existir.
-            // Una bandera nueva sobre una acción que YA existía no llega sola:
-            // la puesta al día sólo inserta los tipos que faltan. La base de
-            // CI se acaba de sembrar, así que nadie la ha configurado y toda
-            // diferencia con el catálogo es un relleno de columna olvidado.
-            const { MOVEMENT_TYPES } = await import('./server/db/catalog.js');
-            const BANDERAS = ['is_incident', 'closes_incident', 'requires_comment', 'requires_photo',
-              'cross_department', 'notify', 'target_from_clean', 'asks_guest_present',
-              'closes_cleaning_request', 'warns_pms'];
-            for (const tipo of MOVEMENT_TYPES) {
-              const fila = one('SELECT * FROM movement_types WHERE code = @code', { code: tipo.code });
-              if (!fila) fallo('falta el tipo de movimiento ' + tipo.code);
-              for (const bandera of BANDERAS) {
-                const esperado = Number(tipo[bandera] ?? 0);
-                if (Number(fila[bandera]) !== esperado) {
-                  fallo(tipo.code + '.' + bandera + ' quedó en ' + fila[bandera] +
-                    ' y el catálogo dice ' + esperado + ': falta el relleno de esa columna en COLUMNAS_NUEVAS');
-                }
-              }
-            }
-
-            // Nada vigente puede apuntar a un estado retirado: una acción así
-            // no funciona —el CDH se niega con "Estado desconocido o
-            // inactivo"— y deja al área sin poder reportar ni cerrar su
-            // trabajo. Es un invariante de cualquier versión: retirar un
-            // estado obliga a llevarse consigo lo que apuntaba a él.
-            const colgando = all(\`
-              SELECT 'acción ' || m.name AS que, s.name AS estado
-                FROM movement_types m JOIN room_statuses s ON s.id = m.target_status_id
-               WHERE m.active = 1 AND s.active = 0
-               UNION ALL
-              SELECT 'categoría ' || c.name, s.name
-                FROM categories c JOIN room_statuses s ON s.id = c.pending_status_id
-               WHERE c.active = 1 AND s.active = 0\`);
-            for (const x of colgando) console.error('::error::' + x.que + ' sigue apuntando al estado retirado ' + x.estado);
-            if (colgando.length) fallo(colgando.length + ' referencias quedaron en un estado retirado');
-
-            const destino = one(\`
-              SELECT code FROM room_statuses
-               WHERE active = 1 AND code <> (SELECT s.code FROM rooms r
-                 JOIN room_statuses s ON s.id = r.status_id WHERE r.number = '403')
-               ORDER BY sort_order LIMIT 1\`);
-            const sup = withPermissions(findUserByUsername('supervisor'));
-            const r = recordMovement({ roomId: getRoomByNumber('403').id, user: sup,
-              statusCode: destino.code, comment: 'Prueba de operación tras actualizar.' });
-            console.log('403 tras actualizar:', r.room.status_name);
-            if (!r.statusChanged) fallo('la operación no funciona tras actualizar');
-          "
+          # 4) Los invariantes que valen para cualquier versión.
+          node "$GUIONES/verificar-actualizacion.mjs"
           echo "Actualización correcta sobre una base en uso."
 
       - name: Limpiar la copia de la versión anterior
