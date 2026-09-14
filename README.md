@@ -60,6 +60,14 @@ configurado desde Administración (un estado renombrado, un umbral ajustado).
 Un campo nuevo se siembra además en todas las habitaciones ya existentes. El
 historial de movimientos no se toca, y cada ejecución queda en la bitácora.
 
+Además **repara lo que una versión anterior dejó a medias**, y sólo eso: una
+acción que apuntaba a un estado ya retirado vuelve a apuntar a donde el
+catálogo dice —si no, al usarla el CDH se niega con «Estado desconocido o
+inactivo»—, y los *correctivos* de una sola vez ponen lo que en su día no llegó
+a las filas que ya existían (una bandera nueva, un permiso que el catálogo
+añadió a un rol). Cada correctivo se aplica una única vez en la vida de la
+base: si después se cambia lo mismo desde Administración, esa decisión manda.
+
 Dos opciones explícitas, porque cambian valores ya definidos:
 
 ```bash

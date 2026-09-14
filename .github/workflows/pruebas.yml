@@ -237,7 +237,7 @@ jobs:
           # cualquier versión: comprobar aquí algo propio de UNA —una columna,
           # un código de acción— envejece y da un rojo falso a la siguiente.
           node --input-type=module -e "
-            const { one } = await import('./server/lib/db.js');
+            const { one, all } = await import('./server/lib/db.js');
             const { loadSettings } = await import('./server/lib/settings.js'); loadSettings();
             const { withPermissions, findUserByUsername } = await import('./server/lib/auth.js');
             const { recordMovement, getRoomByNumber } = await import('./server/lib/movements.js');
@@ -273,6 +273,22 @@ jobs:
                 }
               }
             }
+
+            // Nada vigente puede apuntar a un estado retirado: una acción así
+            // no funciona —el CDH se niega con "Estado desconocido o
+            // inactivo"— y deja al área sin poder reportar ni cerrar su
+            // trabajo. Es un invariante de cualquier versión: retirar un
+            // estado obliga a llevarse consigo lo que apuntaba a él.
+            const colgando = all(\`
+              SELECT 'acción ' || m.name AS que, s.name AS estado
+                FROM movement_types m JOIN room_statuses s ON s.id = m.target_status_id
+               WHERE m.active = 1 AND s.active = 0
+               UNION ALL
+              SELECT 'categoría ' || c.name, s.name
+                FROM categories c JOIN room_statuses s ON s.id = c.pending_status_id
+               WHERE c.active = 1 AND s.active = 0\`);
+            for (const x of colgando) console.error('::error::' + x.que + ' sigue apuntando al estado retirado ' + x.estado);
+            if (colgando.length) fallo(colgando.length + ' referencias quedaron en un estado retirado');
 
             const destino = one(\`
               SELECT code FROM room_statuses

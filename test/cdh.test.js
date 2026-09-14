@@ -10,14 +10,14 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-test-'));
 process.env.CDH_DATA_DIR = TMP;
 process.env.CDH_DB_FILE = path.join(TMP, 'test.sqlite');
 
-const { db, one, all } = await import('../server/lib/db.js');
+const { db, one, all, COLUMNAS_NUEVAS } = await import('../server/lib/db.js');
 const { seed } = await import('../server/db/seed.js');
 const settingsMod = await import('../server/lib/settings.js');
 const { loadSettings } = settingsMod;
 const { withPermissions, findUserByUsername } = await import('../server/lib/auth.js');
 const { recordMovement, recordBulkMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
-const { FLOOR_MAP } = await import('../server/db/catalog.js');
+const { FLOOR_MAP, MOVEMENT_TYPES } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
 const { backup } = await import('../server/db/backup.js');
 const cleaning = await import('../server/lib/cleaning.js');
@@ -460,6 +460,136 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     upgrade({ quiet: true });
     assert.equal(campo().label, 'Frigobar');
     db.prepare("UPDATE fields SET label = 'Refrigerador' WHERE code = 'minibar'").run();
+  });
+
+  test('una acción que apuntaba a un estado retirado vuelve a funcionar', () => {
+    const { upgrade } = upgradeMod;
+    // El resto que dejó el paso a los estados de Arpón: "Reportar a Sistemas"
+    // seguía apuntando a un estado retirado, y al usarla el CDH se negaba con
+    // "Estado desconocido o inactivo". El área se quedaba sin poder reportar.
+    if (!one("SELECT 1 x FROM room_statuses WHERE code = 'SIS_PENDIENTE'")) {
+      db.prepare(`INSERT INTO room_statuses (code, name, icon, color, sort_order, is_system, active)
+                  VALUES ('SIS_PENDIENTE', 'Sistemas pendiente', 'wrench', '#64748b', 98, 1, 0)`).run();
+    }
+    db.prepare("UPDATE room_statuses SET active = 0 WHERE code = 'SIS_PENDIENTE'").run();
+    const retirado = one("SELECT id FROM room_statuses WHERE code = 'SIS_PENDIENTE'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'SYS_REPORT'").run({ s: retirado });
+    db.prepare("UPDATE categories SET pending_status_id = @s WHERE code = 'SIS'").run({ s: retirado });
+
+    const reportar = () => recordMovement({
+      roomId: getRoomByNumber('312').id, user: user('recepcion'), movementTypeCode: 'SYS_REPORT',
+      comment: 'La televisión no da señal.', guestPresent: 'no' });
+    assert.throws(reportar, /Estado desconocido o inactivo/, 'así se quedó la base del hotel');
+
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Destino que apuntaba a un estado retirado'));
+    assert.equal(reportar().room.status_code, 'FUERA_SERVICIO', 'la acción vuelve a llevar a algún sitio');
+    assert.equal(
+      one("SELECT s.code c FROM categories t JOIN room_statuses s ON s.id = t.pending_status_id WHERE t.code = 'SIS'").c,
+      'FUERA_SERVICIO');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('un destino vigente que el hotel cambió no se toca', () => {
+    const { upgrade } = upgradeMod;
+    // Sólo se reapunta lo que quedó en un estado RETIRADO. Si el hotel mandó
+    // una acción a otro estado que sigue vigente, esa decisión es suya.
+    const suyo = one("SELECT id FROM room_statuses WHERE code = 'DISCREPANCIA'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'RELEASE'").run({ s: suyo });
+    assert.equal(upgrade({ quiet: true }).length, 0);
+    assert.equal(
+      one("SELECT s.code c FROM movement_types m JOIN room_statuses s ON s.id = m.target_status_id WHERE m.code = 'RELEASE'").c,
+      'DISCREPANCIA', 'la puesta al día respeta lo que el hotel configuró');
+    const vuelta = one("SELECT id FROM room_statuses WHERE code = 'DISPONIBLE_LIMPIO'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'RELEASE'").run({ s: vuelta });
+  });
+
+  test('una bandera publicada tarde llega a las acciones que ya existían', () => {
+    const { upgrade } = upgradeMod;
+    // El fallo que esto vigila: la puesta al día sólo INSERTA lo que falta, y
+    // una acción que ya está en la base no se vuelve a insertar. Una columna
+    // de bandera añadida después nace en 0 para todas ellas, así que sin
+    // relleno la bandera no llega nunca —fue lo que dejó a "Reportar a
+    // Sistemas" sin preguntar si el huésped estaría en la habitación—.
+    //
+    // Se recrea ese momento quitando las columnas: la puesta al día las
+    // vuelve a añadir, y con ellas debe llegar lo que el catálogo declara.
+    const banderas = COLUMNAS_NUEVAS.filter(
+      (c) => c.table === 'movement_types' && c.ddl === 'INTEGER NOT NULL DEFAULT 0');
+    assert.ok(banderas.length, 'el catálogo debe tener banderas añadidas después');
+
+    // El correctivo de una sola vez ya se gastó en esta base (lo agotó la
+    // primera puesta al día de esta sección), así que lo único que puede
+    // sembrar las banderas aquí es el relleno de la columna.
+    assert.ok(one("SELECT 1 x FROM audit_log WHERE entity_id LIKE 'correctivo:%'"),
+      'el correctivo debe estar ya aplicado para que esta prueba mida el relleno');
+
+    for (const c of banderas) db.exec(`ALTER TABLE movement_types DROP COLUMN ${c.column}`);
+    upgrade({ quiet: true });
+
+    for (const m of MOVEMENT_TYPES) {
+      const fila = one('SELECT * FROM movement_types WHERE code = @code', { code: m.code });
+      for (const c of banderas) {
+        assert.equal(fila[c.column], m[c.column] ? 1 : 0,
+          `${m.name} debe quedar con ${c.column} = ${m[c.column] ? 1 : 0}`);
+      }
+    }
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('los correctivos reparan lo que se publicó a medias, y sólo una vez', () => {
+    const { upgrade } = upgradeMod;
+    // En ESTA base los correctivos ya se gastaron: lo que la base tenga manda,
+    // y lo que el hotel cambie desde Administración se queda como lo dejó.
+    db.prepare("UPDATE movement_types SET asks_guest_present = 0 WHERE code = 'SYS_REPORT'").run();
+    assert.equal(upgrade({ quiet: true }).length, 0, 'un correctivo gastado no vuelve a actuar');
+    assert.equal(one("SELECT asks_guest_present v FROM movement_types WHERE code = 'SYS_REPORT'").v, 0,
+      'no deshace una decisión posterior del hotel');
+    db.prepare("UPDATE movement_types SET asks_guest_present = 1 WHERE code = 'SYS_REPORT'").run();
+
+    // Y sobre una base que nunca los pasó —la del hotel, actualizada con la
+    // versión en la que faltaban el relleno y el reparto del permiso—, los
+    // aplican. Va en su propio proceso porque hace falta una base sin el
+    // correctivo en la bitácora, y la bitácora es inmutable: no se puede
+    // borrar de aquí.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-correctivo-'));
+    const { CDH_DB_FILE, ...limpio } = process.env;
+    const guion = `
+      const { seed } = await import('./server/db/seed.js');
+      seed({ quiet: true });
+      const { db, one } = await import('./server/lib/db.js');
+      // La base del hotel: las banderas nunca llegaron y Recepción se quedó
+      // sin el permiso que el catálogo le asigna.
+      db.exec("UPDATE movement_types SET asks_guest_present = 0, target_from_clean = 0");
+      db.exec(\`DELETE FROM role_permissions
+                 WHERE role_id = (SELECT id FROM roles WHERE code = 'RECEPCION')
+                   AND permission_id = (SELECT id FROM permissions WHERE code = 'room.status')\`);
+      const { upgrade } = await import('./server/db/upgrade.js');
+      const primera = upgrade({ quiet: true });
+      const segunda = upgrade({ quiet: true });
+      const tiene = (rol, permiso) => !!one(\`SELECT 1 x FROM role_permissions rp
+          JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
+         WHERE r.code = @rol AND p.code = @permiso\`, { rol, permiso });
+      console.log(JSON.stringify({
+        grupos: primera.map((a) => a.grupo),
+        segunda: segunda.length,
+        sys: one("SELECT asks_guest_present v FROM movement_types WHERE code = 'SYS_REPORT'").v,
+        limpieza: one("SELECT target_from_clean v FROM movement_types WHERE code = 'CLEAN_DONE'").v,
+        recepcionCambiaEstado: tiene('RECEPCION', 'room.status'),
+      }));`;
+    const r = childProcess.spawnSync(process.execPath, ['--input-type=module', '-e', guion], {
+      cwd: path.resolve(import.meta.dirname, '..'), encoding: 'utf8',
+      env: { ...limpio, CDH_DATA_DIR: dir, CDH_SEED_PASSWORD: 'Cli#Prueba2026' },
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout.trim().split('\n').pop());
+    assert.ok(out.grupos.includes('Bandera que no había llegado'), 'debe anunciar las banderas que corrigió');
+    assert.ok(out.grupos.includes('Permiso que faltaba en el rol'), 'y el permiso que repartió');
+    assert.equal(out.sys, 1, 'reportar a Sistemas vuelve a preguntar si el huésped estará');
+    assert.equal(out.limpieza, 1);
+    assert.equal(out.recepcionCambiaEstado, true, 'Recepción puede reportar a Sistemas y a Mantenimiento');
+    assert.equal(out.segunda, 0, 'los correctivos se gastan: la segunda pasada no cambia nada');
   });
 
   test('la simulación no escribe nada', () => {

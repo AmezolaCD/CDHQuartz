@@ -106,6 +106,83 @@ const EQUIVALENCIAS = [
 /** Permisos que dejan de existir. No los referencia el historial. */
 const PERMISOS_RETIRADOS = ['room.occupancy'];
 
+/**
+ * Permisos que el catálogo añadió a un rol del sistema DESPUÉS de que el
+ * permiso ya existiera. La puesta al día sólo reparte los permisos que acaban
+ * de nacer —quitarle uno a un rol es una decisión del administrador y se
+ * respeta—, así que un permiso viejo asignado a un rol nuevo no llegaba: fue
+ * lo que dejó a Recepción sin poder reportar a Sistemas ni a Mantenimiento.
+ */
+const PERMISOS_TARDIOS = [
+  {
+    rol: 'RECEPCION',
+    permisos: ['room.status'],
+    porque: 'Recepción reporta a Sistemas y a Mantenimiento, y entrega habitaciones limpias',
+  },
+];
+
+/**
+ * Correctivos de una sola vez.
+ *
+ * Reparan lo que una versión anterior publicó a medias. Se aplican UNA SOLA
+ * VEZ en la vida de la base —la bitácora, que es inmutable, lleva la cuenta—,
+ * así que si mañana el hotel cambia lo mismo desde Administración, la
+ * siguiente puesta al día respeta su decisión en vez de deshacerla.
+ */
+const CORRECTIVOS = [
+  {
+    // Una bandera nueva del catálogo llega sola a las filas que nacen con
+    // ella, pero NO a las que ya existían: la puesta al día sólo inserta lo
+    // que falta. Cuando el relleno de la columna se publicó tarde, la bandera
+    // se quedó en 0 para siempre —fue el caso de "¿el huésped estará en la
+    // habitación?", que no se preguntaba al reportar a Sistemas ni a
+    // Mantenimiento porque la bandera nunca les llegó—.
+    id: 'banderas-acciones-arpon',
+    titulo: 'Banderas de las acciones que no llegaron a las ya existentes',
+    porque: 'sus columnas nacieron con las acciones ya creadas, así que el valor del catálogo nunca les llegó',
+    grupo: 'Bandera que no había llegado',
+    aplicar() {
+      const columnas = ['target_from_clean', 'asks_guest_present', 'closes_cleaning_request', 'warns_pms'];
+      const hechas = [];
+      for (const m of MOVEMENT_TYPES) {
+        const declara = columnas.filter((col) => m[col]);
+        if (!declara.length) continue;
+        const fila = one(`SELECT id, name, ${columnas.join(', ')} FROM movement_types WHERE code = @code`,
+          { code: m.code });
+        if (!fila) continue;
+        const apagadas = declara.filter((col) => !fila[col]);
+        if (!apagadas.length) continue;
+        db.prepare(`UPDATE movement_types SET ${apagadas.map((col) => `${col} = 1`).join(', ')} WHERE id = @id`)
+          .run({ id: fila.id });
+        hechas.push({ code: m.code, name: fila.name, banderas: apagadas });
+      }
+      return hechas.map((h) => ({ resumen: `${h.name} (${h.banderas.join(', ')})`, ...h }));
+    },
+  },
+  {
+    id: 'permisos-tardios-al-rol',
+    titulo: 'Permisos que el catálogo añadió a un rol del sistema',
+    porque: 'el permiso ya existía cuando el catálogo se lo asignó al rol, así que la puesta al día no se lo repartía',
+    grupo: 'Permiso que faltaba en el rol',
+    aplicar() {
+      const hechas = [];
+      for (const t of PERMISOS_TARDIOS) {
+        const rol = one('SELECT id, name, is_system FROM roles WHERE code = @code', { code: t.rol });
+        if (!rol || !rol.is_system) continue;
+        for (const code of t.permisos) {
+          const permiso = one('SELECT id, name FROM permissions WHERE code = @code', { code });
+          if (!permiso) continue;
+          if (one('SELECT 1 x FROM role_permissions WHERE role_id = @r AND permission_id = @p',
+            { r: rol.id, p: permiso.id })) continue;
+          insert('role_permissions', { role_id: rol.id, permission_id: permiso.id });
+          hechas.push({ resumen: `${rol.name}: ${permiso.name}`, rol: rol.name, permiso: code, porque: t.porque });
+        }
+      }
+      return hechas;
+    },
+  },
+];
+
 function parseArgs(argv) {
   const opts = { dryRun: false, timezone: null, promote: null };
   for (const a of argv) {
@@ -309,6 +386,35 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
       anotar('Retirado del catálogo', `${r.de} — ${r.porque}`);
     }
 
+    // ----------------------- Referencias que quedaron en un estado retirado
+    // Una acción cuyo estado destino acaba de retirarse ya no funciona: al
+    // usarla el CDH se niega con "Estado desconocido o inactivo" y el área
+    // se queda sin poder reportar ni cerrar su trabajo. Apuntar a un estado
+    // retirado no es una decisión de nadie —es un resto de la versión
+    // anterior—, así que se reapunta a lo que el catálogo declara hoy. Sólo
+    // se tocan las que apuntan a un retirado: un destino vigente, aunque el
+    // hotel lo haya cambiado, se respeta.
+    const reapuntadas = [];
+    const reapuntar = (tabla, columna, code, destinoCode, etiqueta) => {
+      const fila = one(`SELECT t.id, t.${etiqueta} AS nombre, t.${columna} AS destino,
+                               s.name AS destino_nombre, s.active AS destino_activo
+                          FROM ${tabla} t
+                          LEFT JOIN room_statuses s ON s.id = t.${columna}
+                         WHERE t.code = @code`, { code });
+      if (!fila || !fila.destino || fila.destino_activo) return;
+      const nuevo = destinoCode
+        ? one('SELECT id, name FROM room_statuses WHERE code = @code AND active = 1', { code: destinoCode })
+        : null;
+      // Si el catálogo declara un destino y ese destino no está disponible, se
+      // deja como está: mejor un resto visible que un destino inventado.
+      if (destinoCode && !nuevo) return;
+      db.prepare(`UPDATE ${tabla} SET ${columna} = @s WHERE id = @id`).run({ s: nuevo?.id ?? null, id: fila.id });
+      reapuntadas.push(`${fila.nombre}: ${fila.destino_nombre ?? 'estado inexistente'} → ${nuevo?.name ?? 'sin estado destino'}`);
+    };
+    for (const m of MOVEMENT_TYPES) reapuntar('movement_types', 'target_status_id', m.code, m.target_status, 'name');
+    for (const c of CATEGORIES) reapuntar('categories', 'pending_status_id', c.code, c.pending_status, 'name');
+    if (reapuntadas.length) anotar('Destino que apuntaba a un estado retirado', reapuntadas.join('; '));
+
     // Los permisos no llevan baja lógica y el historial no los referencia: se
     // eliminan, y con ellos su asignación a cada rol.
     for (const code of PERMISOS_RETIRADOS) {
@@ -366,6 +472,21 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
         target_status_id: target_status ? idPor('room_statuses', target_status) : null,
       });
       anotar('Acción', m.name);
+    }
+
+    // ------------------------------------------------ Correctivos de una vez
+    for (const c of CORRECTIVOS) {
+      const marca = `correctivo:${c.id}`;
+      if (one("SELECT 1 x FROM audit_log WHERE entity_type = 'system' AND entity_id = @marca", { marca })) continue;
+      const hechas = c.aplicar();
+      // La marca se escribe aunque no hubiera nada que corregir: lo que agota
+      // el correctivo es haberlo pasado por esta base, no haber cambiado algo.
+      audit({
+        entityType: 'system', entityId: marca, entityLabel: c.titulo, action: 'upgrade',
+        after: { corregidas: hechas },
+        reason: `Correctivo de una sola vez: ${c.porque}`,
+      });
+      if (hechas.length) anotar(c.grupo, hechas.map((h) => h.resumen).join('; '));
     }
 
     // ---------------------------------------------------- Configuraciones

@@ -256,3 +256,52 @@ categorías, campos (con sus opciones y valores de incidencia), acciones
 rápidas, departamentos, usuarios, roles y permisos. La interfaz se arma a
 partir del catálogo, así que un campo nuevo aparece en el expediente y en los
 reportes sin desplegar nada.
+
+## La puesta al día de una base en uso
+
+El hotel no reinstala: `npm run upgrade` pone al día la base con la que ya
+trabaja. La regla de oro es que **sólo añade lo que falta**, para no pisar lo
+que un administrador haya configurado ni tocar el historial. Esa regla tiene un
+punto ciego, y conviene tenerlo escrito porque ya mordió dos veces.
+
+**Lo que se inserta llega completo; lo que ya existe, no.** La puesta al día
+inserta las filas del catálogo que faltan, así que una acción nueva nace con
+todas sus banderas puestas. Pero una acción que YA está en la base no se vuelve
+a insertar: si una versión posterior le añade una bandera —una columna nueva—,
+esa fila se queda con el valor por defecto para siempre. Así fue como
+«¿el huésped estará en la habitación?» no se preguntaba al reportar a Sistemas
+ni a Mantenimiento: la columna existía, el catálogo la declaraba, y a las
+acciones del hotel nunca les llegó.
+
+De ahí los cuatro mecanismos, cada uno con su guarda:
+
+- **`COLUMNAS_NUEVAS` + `backfill`** (`server/lib/db.js`) — el relleno corre una
+  sola vez, justo al crear la columna: hasta ese momento nadie pudo
+  configurarla, así que poner el valor previsto no pisa ninguna decisión. Para
+  las banderas de las acciones el relleno **se escribe a partir del catálogo**
+  (`banderaDeAccion`), no a mano: una lista copiada se queda atrás en cuanto la
+  bandera se le añade a una acción más, y nada avisa.
+- **`RENOMBRES` / `RETIRADOS`** — sólo actúan si la fila conserva exactamente el
+  valor con el que se publicó y nada la usa. Si el hotel ya la cambió, la
+  decisión es suya.
+- **Referencias a un estado retirado** — una acción cuyo destino acaba de
+  retirarse deja de funcionar: el CDH se niega con «Estado desconocido o
+  inactivo» y el área se queda sin poder reportar ni cerrar su trabajo. Apuntar
+  a un retirado no es la decisión de nadie, es un resto, así que se reapunta a
+  lo que el catálogo declara hoy. Un destino vigente no se toca nunca, aunque
+  difiera del catálogo.
+- **`CORRECTIVOS`** — para lo que una versión publicó a medias y ya no tiene
+  arreglo automático: la columna existe, así que su relleno no volverá a
+  correr. Se aplican **una sola vez en la vida de la base** y la bitácora
+  —inmutable— lleva la cuenta con una marca `correctivo:<id>`. Por eso un
+  correctivo repara la base del hotel hoy y, si mañana Administración cambia lo
+  mismo a mano, no lo deshace.
+
+Las pruebas cierran el círculo: una quita las columnas de banderas y exige que
+la puesta al día las vuelva a sembrar con lo que el catálogo dice; otra levanta
+en un proceso aparte una base como la del hotel —banderas apagadas, permiso sin
+repartir— y exige que los correctivos la reparen y que la segunda pasada no
+cambie nada. Y en CI, el trabajo *Actualización desde la versión anterior*
+siembra con el commit base del PR y verifica invariantes que valen para
+cualquier versión: el historial intacto, ninguna habitación en un estado
+retirado, ninguna referencia colgando y la operación viva.

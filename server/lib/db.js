@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MOVEMENT_TYPES } from '../db/catalog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(__dirname, '..', '..');
@@ -18,18 +19,32 @@ db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
 
 /**
+ * Relleno de una bandera de las acciones, escrito a partir del catálogo.
+ *
+ * La lista de acciones NO se copia a mano: si se copiara, añadir la bandera a
+ * una acción más en el catálogo dejaría el relleno atrás sin que nada avise, y
+ * la bandera no llegaría a las bases en uso. Aquí la fuente es una sola.
+ */
+function banderaDeAccion(columna) {
+  const codes = MOVEMENT_TYPES.filter((m) => m[columna]).map((m) => `'${m.code}'`);
+  return {
+    table: 'movement_types',
+    column: columna,
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+    backfill: codes.length
+      ? `UPDATE movement_types SET ${columna} = 1 WHERE code IN (${codes.join(', ')})`
+      : null,
+  };
+}
+
+/**
  * Columnas añadidas después de la primera versión del esquema.
  * `backfill` se ejecuta una sola vez, justo al crear la columna: como hasta
  * ese momento no existía, nadie pudo configurarla y poner el valor previsto
  * no pisa ninguna decisión del administrador.
  */
-const COLUMNAS_NUEVAS = [
-  {
-    table: 'movement_types',
-    column: 'cross_department',
-    ddl: 'INTEGER NOT NULL DEFAULT 0',
-    backfill: "UPDATE movement_types SET cross_department = 1 WHERE code IN ('MAINT_REPORT', 'SYS_REPORT')",
-  },
+export const COLUMNAS_NUEVAS = [
+  banderaDeAccion('cross_department'),
   {
     table: 'movement_types',
     column: 'closes_scope',
@@ -90,25 +105,13 @@ const COLUMNAS_NUEVAS = [
   // El dato del reporte que sustituyó al eje de ocupación: si el huésped
   // estará en la habitación cuando suba el área responsable.
   { table: 'movements', column: 'guest_present', ddl: 'TEXT' },
-  { table: 'movement_types', column: 'target_from_clean', ddl: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'movement_types', column: 'asks_guest_present', ddl: 'INTEGER NOT NULL DEFAULT 0' },
+  // Estas dos son el ejemplo de por qué el relleno importa: se publicaron sin
+  // él y la pregunta por el huésped no llegó a los reportes que ya existían.
+  banderaDeAccion('target_from_clean'),
+  banderaDeAccion('asks_guest_present'),
   { table: 'room_statuses', column: 'clean_status_id', ddl: 'INTEGER REFERENCES room_statuses(id)' },
-  {
-    // Sin este relleno la bandera nunca llegaría a una acción que YA existe:
-    // la puesta al día sólo inserta los tipos de movimiento que faltan, así
-    // que "Limpieza terminada" se quedaría sin cerrar ninguna solicitud.
-    table: 'movement_types',
-    column: 'closes_cleaning_request',
-    ddl: 'INTEGER NOT NULL DEFAULT 0',
-    backfill: "UPDATE movement_types SET closes_cleaning_request = 1 WHERE code = 'CLEAN_DONE'",
-  },
-  {
-    table: 'movement_types',
-    column: 'warns_pms',
-    ddl: 'INTEGER NOT NULL DEFAULT 0',
-    // DELIVER nace con la bandera puesta; estas dos ya existían.
-    backfill: "UPDATE movement_types SET warns_pms = 1 WHERE code IN ('GUEST_IN', 'GUEST_OUT')",
-  },
+  banderaDeAccion('closes_cleaning_request'),
+  banderaDeAccion('warns_pms'),
   {
     table: 'room_statuses',
     column: 'attention_weight',
