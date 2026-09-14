@@ -6,12 +6,14 @@ import { register, setOutlet, render, navigate, parseHash } from './router.js';
 import { loginView, passwordPrompt } from './views/login.js';
 import { dashboardView } from './views/dashboard.js';
 import { floorsView, attentionView, activityView, managementView, reportsView, auditView } from './views/pages.js';
+import { cleaningView } from './views/cleaning.js';
 import { adminView } from './views/admin.js';
 import { openRoom } from './views/room.js';
 
 const NAV = [
   { path: 'inicio',     label: 'Inicio',      icon: 'home',   perm: 'room.view' },
   { path: 'pisos',      label: 'Pisos',       icon: 'grid',   perm: 'room.view' },
+  { path: 'limpieza',   label: 'Limpieza',    icon: 'spray',  perm: 'room.view' },
   { path: 'atencion',   label: 'Atención',    icon: 'alert',  perm: 'room.view' },
   { path: 'actividad',  label: 'Actividad',   icon: 'history',perm: 'history.view' },
   { path: 'gerencial',  label: 'Gerencial',   icon: 'chart',  perm: 'dashboard.manage' },
@@ -22,6 +24,7 @@ const NAV = [
 
 register('inicio', dashboardView);
 register('pisos', floorsView);
+register('limpieza', cleaningView);
 register('atencion', attentionView);
 register('actividad', activityView);
 register('gerencial', managementView);

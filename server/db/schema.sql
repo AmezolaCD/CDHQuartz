@@ -181,6 +181,63 @@ CREATE INDEX IF NOT EXISTS ix_rooms_status ON rooms(status_id);
 -- columnas nuevas, después). Vive en INDICES_TARDIOS, en server/lib/db.js.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_rooms_grid ON rooms(grid_row, grid_col);
 
+-- ------------------------------------------- Solicitudes de limpieza
+-- Recepción pide, Ama de Llaves atiende. La solicitud es ESTADO ACTUAL —una
+-- cola de trabajo—, no historial: vive en su propia tabla y cada cambio suyo
+-- deja además un movimiento, que es lo inmutable.
+CREATE TABLE IF NOT EXISTS cleaning_priorities (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  code            TEXT NOT NULL UNIQUE,
+  name            TEXT NOT NULL,
+  icon            TEXT NOT NULL DEFAULT 'clock',
+  color           TEXT NOT NULL DEFAULT '#64748b',
+  description     TEXT,
+  -- A mayor peso, más arriba en la cola. Es lo que ordena, no el nombre ni el
+  -- color: así se puede insertar una prioridad nueva entre dos existentes.
+  weight          INTEGER NOT NULL DEFAULT 1,
+  -- Severidad del aviso que genera. Una urgente despierta a quien haga falta.
+  notify_severity TEXT NOT NULL DEFAULT 'normal',
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  is_system       INTEGER NOT NULL DEFAULT 0,
+  active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS cleaning_requests (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_id           INTEGER NOT NULL REFERENCES rooms(id),
+  room_number       TEXT NOT NULL,
+  floor_id          INTEGER NOT NULL REFERENCES floors(id),
+  floor_number      INTEGER NOT NULL,
+  priority_id       INTEGER NOT NULL REFERENCES cleaning_priorities(id),
+  -- Copia del nombre y del peso: si mañana se renombra la prioridad, la cola
+  -- de ayer sigue contando lo que decía entonces.
+  priority_code     TEXT NOT NULL,
+  priority_name     TEXT NOT NULL,
+  priority_weight   INTEGER NOT NULL DEFAULT 1,
+  status            TEXT NOT NULL DEFAULT 'pendiente', -- pendiente|atendida|cancelada
+  note              TEXT,
+  requested_by      INTEGER NOT NULL REFERENCES users(id),
+  requested_by_name TEXT NOT NULL,
+  requested_department TEXT,
+  requested_at      TEXT NOT NULL,
+  requested_epoch   INTEGER NOT NULL,
+  local_date        TEXT NOT NULL,
+  local_time        TEXT NOT NULL,
+  movement_id       INTEGER REFERENCES movements(id),
+  closed_by         INTEGER REFERENCES users(id),
+  closed_by_name    TEXT,
+  closed_at         TEXT,
+  closed_epoch      INTEGER,
+  closed_reason     TEXT,
+  closed_movement_id INTEGER REFERENCES movements(id)
+);
+CREATE INDEX IF NOT EXISTS ix_solic_room  ON cleaning_requests(room_id, status);
+CREATE INDEX IF NOT EXISTS ix_solic_cola  ON cleaning_requests(status, priority_weight DESC, requested_epoch);
+-- Una habitación no puede tener dos solicitudes pendientes a la vez: la
+-- segunda sube la prioridad de la primera en lugar de duplicar el trabajo.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_solic_pendiente
+  ON cleaning_requests(room_id) WHERE status = 'pendiente';
+
 -- --------------------------------------------------- Categorías y campos
 CREATE TABLE IF NOT EXISTS categories (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +300,12 @@ CREATE TABLE IF NOT EXISTS movement_types (
   -- 1 = al registrarla se pregunta si el huésped estará en la habitación. Es
   -- lo que Mantenimiento y Sistemas necesitan saber antes de subir.
   asks_guest_present  INTEGER NOT NULL DEFAULT 0,
+  -- 1 = al registrarla se da por atendida la solicitud de limpieza pendiente
+  -- de esa habitación, si la hubiera.
+  closes_cleaning_request INTEGER NOT NULL DEFAULT 0,
+  -- 1 = cambia algo que el PMS también lleva, así que hay que repetirlo allá
+  -- mientras los dos sistemas no estén enlazados.
+  warns_pms           INTEGER NOT NULL DEFAULT 0,
   icon              TEXT NOT NULL DEFAULT 'bolt',
   severity          TEXT NOT NULL DEFAULT 'normal', -- normal|alta|critica
   is_incident       INTEGER NOT NULL DEFAULT 0,

@@ -421,9 +421,85 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('el centro de limpieza ordena la cola y avisa del PMS', async () => {
+    const { page } = await abrirSesion('recepcion');
+    await page.evaluate(() => { location.hash = '#/limpieza'; });
+    await page.waitForSelector('[data-cola]');
+    await page.waitForTimeout(700);
+
+    // El aviso de que el cambio hay que repetirlo en Arpón está a la vista.
+    assert.match(await page.locator('.pms-notice').first().textContent(), /Arpón Enterprise/);
+
+    for (const [numero, prioridad] of [['1001', 'BAJA'], ['1002', 'URGENTE'], ['1003', 'ALTA']]) {
+      await page.locator('[data-pedir]').click();
+      await page.waitForSelector('#pedirForm');
+      await page.fill('#pedirForm [name=numero]', numero);
+      await page.check(`#pedirForm [name=priority][value=${prioridad}]`);
+      await page.locator('.modal-foot [type=submit]').click();
+      await page.waitForSelector('.toast.ok', { timeout: 10000 });
+      await page.waitForTimeout(700);
+    }
+
+    // La cola se ordena sola: urgente, alta, baja.
+    const orden = await page.locator('[data-cola] .solic .num').allTextContents();
+    assert.deepEqual(orden.slice(0, 3), ['1002', '1003', '1001'], `quedó: ${orden.join(', ')}`);
+
+    // Una habitación con limpieza pedida no se ofrece para entregar.
+    const listas = await page.locator('[data-listas] .solic .num').allTextContents();
+    assert.ok(!listas.includes('1002'), 'con limpieza pendiente no está para entregarse');
+    await page.close();
+  });
+
+  test('Ama de Llaves atiende la cola pero no se pide trabajo a sí misma', async () => {
+    const { page } = await abrirSesion('amadellaves');
+    await page.evaluate(() => { location.hash = '#/limpieza'; });
+    await page.waitForSelector('[data-cola]');
+    await page.waitForTimeout(700);
+
+    assert.equal(await page.locator('[data-pedir]').count(), 0,
+      'solicitar limpieza es de Recepción');
+    assert.ok(await page.locator('[data-atender]').count() > 0,
+      'atender la cola sí es suyo');
+
+    // Y la atiende de verdad.
+    const antes = await page.locator('[data-cola] .solic').count();
+    await page.locator('[data-atender]').first().click();
+    await page.waitForSelector('#cerrarForm');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator('[data-cola] .solic').count(), antes - 1);
+    await page.close();
+  });
+
+  test('entregar una habitación limpia avisa del PMS antes de guardar', async () => {
+    const { page } = await abrirSesion('recepcion');
+    await page.evaluate(() => { location.hash = '#/limpieza'; });
+    await page.waitForSelector('[data-listas] .solic');
+    await page.waitForTimeout(600);
+
+    const numero = (await page.locator('[data-listas] .solic .num').first().textContent()).trim();
+    await page.locator('[data-entregar]').first().click();
+    await page.waitForSelector('#entregarForm');
+    assert.match(await page.locator('#entregarForm .pms-notice').textContent(), /Arpón Enterprise/,
+      'el aviso tiene que verse ANTES de guardar, no después');
+
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast', { timeout: 10000 });
+    await page.waitForTimeout(900);
+
+    // Y quedó en Entrada nueva, fuera de la venta.
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.waitForTimeout(600);
+    const tarjeta = page.locator('.room', { hasText: numero }).first();
+    assert.match(await tarjeta.locator('.st').textContent(), /Entrada nueva/);
+    await page.close();
+  });
+
   test('ninguna vista produce errores de JavaScript', async () => {
     const { page, errores } = await abrirSesion();
-    for (const vista of ['inicio', 'pisos', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {
+    for (const vista of ['inicio', 'pisos', 'limpieza', 'atencion', 'actividad', 'gerencial', 'reportes', 'auditoria', 'admin']) {
       await page.evaluate((v) => { location.hash = `#/${v}`; }, vista);
       await page.waitForTimeout(900);
       assert.equal(await page.locator('.alert.error').count(), 0, `la vista ${vista} falló al cargar`);

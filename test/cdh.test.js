@@ -10,16 +10,17 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-test-'));
 process.env.CDH_DATA_DIR = TMP;
 process.env.CDH_DB_FILE = path.join(TMP, 'test.sqlite');
 
-const { db, one, all } = await import('../server/lib/db.js');
+const { db, one, all, COLUMNAS_NUEVAS } = await import('../server/lib/db.js');
 const { seed } = await import('../server/db/seed.js');
 const settingsMod = await import('../server/lib/settings.js');
 const { loadSettings } = settingsMod;
 const { withPermissions, findUserByUsername } = await import('../server/lib/auth.js');
 const { recordMovement, recordBulkMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
-const { FLOOR_MAP } = await import('../server/db/catalog.js');
+const { FLOOR_MAP, MOVEMENT_TYPES } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
 const { backup } = await import('../server/db/backup.js');
+const cleaning = await import('../server/lib/cleaning.js');
 const Database = (await import('better-sqlite3')).default;
 
 const user = (name) => withPermissions(findUserByUsername(name));
@@ -179,6 +180,23 @@ describe('Permisos y alcance por departamento', () => {
     const room = getRoomByNumber('710');
     assert.throws(
       () => recordMovement({ roomId: room.id, user: user('gerencia'), movementTypeCode: 'NOTE', comment: 'x' }),
+      (e) => e.status === 403);
+  });
+
+  test('Recepción reporta a Mantenimiento y a Sistemas, aunque no sean su área', () => {
+    // Son reportes hacia otra área: cualquiera puede levantarlos. Cerrarlos
+    // sigue siendo del área responsable.
+    for (const [numero, code] of [['717', 'MAINT_REPORT'], ['718', 'SYS_REPORT']]) {
+      const r = recordMovement({
+        roomId: getRoomByNumber(numero).id, user: user('recepcion'), movementTypeCode: code,
+        comment: 'Lo reporta Recepción.', guestPresent: 'si',
+      });
+      assert.equal(r.movementIds.length, 1, `${code} debería poder registrarse`);
+    }
+    // Pero no cierra el trabajo de esas áreas.
+    assert.throws(
+      () => recordMovement({ roomId: getRoomByNumber('717').id, user: user('recepcion'),
+        movementTypeCode: 'MAINT_DONE', comment: 'x' }),
       (e) => e.status === 403);
   });
 
@@ -414,6 +432,164 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     db.prepare('UPDATE rooms SET status_id = @s WHERE id = @id').run({ s: antes, id: room.id });
     upgrade({ quiet: true });
     assert.equal(id().active, 0);
+  });
+
+  test('renombra un campo sin perder lo que las habitaciones ya tenían', () => {
+    const { upgrade } = upgradeMod;
+    const campo = () => one("SELECT id, label FROM fields WHERE code = 'minibar'");
+
+    // El valor de una habitación cuelga del id del campo, no de su nombre:
+    // por eso el código no cambia y el histórico sobrevive al renombre.
+    const room = getRoomByNumber('311');
+    recordMovement({ roomId: room.id, user: user('amadellaves'),
+      details: [{ fieldCode: 'minibar', value: 'Consumido' }], comment: 'Se repone en el turno.' });
+    const antes = campo().id;
+
+    db.prepare("UPDATE fields SET label = 'Minibar' WHERE code = 'minibar'").run();
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Nombre más claro'));
+    assert.equal(campo().label, 'Refrigerador');
+    assert.equal(campo().id, antes, 'el campo es el mismo, sólo cambió su etiqueta');
+    assert.equal(
+      one(`SELECT value v FROM room_details WHERE room_id = @r AND field_id = @f`,
+        { r: room.id, f: antes }).v, 'Consumido', 'el valor de la habitación sigue ahí');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la condición se agota sola');
+
+    // Si el hotel lo renombró a su manera, su decisión manda.
+    db.prepare("UPDATE fields SET label = 'Frigobar' WHERE code = 'minibar'").run();
+    upgrade({ quiet: true });
+    assert.equal(campo().label, 'Frigobar');
+    db.prepare("UPDATE fields SET label = 'Refrigerador' WHERE code = 'minibar'").run();
+  });
+
+  test('una acción que apuntaba a un estado retirado vuelve a funcionar', () => {
+    const { upgrade } = upgradeMod;
+    // El resto que dejó el paso a los estados de Arpón: "Reportar a Sistemas"
+    // seguía apuntando a un estado retirado, y al usarla el CDH se negaba con
+    // "Estado desconocido o inactivo". El área se quedaba sin poder reportar.
+    if (!one("SELECT 1 x FROM room_statuses WHERE code = 'SIS_PENDIENTE'")) {
+      db.prepare(`INSERT INTO room_statuses (code, name, icon, color, sort_order, is_system, active)
+                  VALUES ('SIS_PENDIENTE', 'Sistemas pendiente', 'wrench', '#64748b', 98, 1, 0)`).run();
+    }
+    db.prepare("UPDATE room_statuses SET active = 0 WHERE code = 'SIS_PENDIENTE'").run();
+    const retirado = one("SELECT id FROM room_statuses WHERE code = 'SIS_PENDIENTE'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'SYS_REPORT'").run({ s: retirado });
+    db.prepare("UPDATE categories SET pending_status_id = @s WHERE code = 'SIS'").run({ s: retirado });
+
+    const reportar = () => recordMovement({
+      roomId: getRoomByNumber('312').id, user: user('recepcion'), movementTypeCode: 'SYS_REPORT',
+      comment: 'La televisión no da señal.', guestPresent: 'no' });
+    assert.throws(reportar, /Estado desconocido o inactivo/, 'así se quedó la base del hotel');
+
+    const acciones = upgrade({ quiet: true });
+    assert.ok(acciones.some((a) => a.grupo === 'Destino que apuntaba a un estado retirado'));
+    assert.equal(reportar().room.status_code, 'FUERA_SERVICIO', 'la acción vuelve a llevar a algún sitio');
+    assert.equal(
+      one("SELECT s.code c FROM categories t JOIN room_statuses s ON s.id = t.pending_status_id WHERE t.code = 'SIS'").c,
+      'FUERA_SERVICIO');
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('un destino vigente que el hotel cambió no se toca', () => {
+    const { upgrade } = upgradeMod;
+    // Sólo se reapunta lo que quedó en un estado RETIRADO. Si el hotel mandó
+    // una acción a otro estado que sigue vigente, esa decisión es suya.
+    const suyo = one("SELECT id FROM room_statuses WHERE code = 'DISCREPANCIA'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'RELEASE'").run({ s: suyo });
+    assert.equal(upgrade({ quiet: true }).length, 0);
+    assert.equal(
+      one("SELECT s.code c FROM movement_types m JOIN room_statuses s ON s.id = m.target_status_id WHERE m.code = 'RELEASE'").c,
+      'DISCREPANCIA', 'la puesta al día respeta lo que el hotel configuró');
+    const vuelta = one("SELECT id FROM room_statuses WHERE code = 'DISPONIBLE_LIMPIO'").id;
+    db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'RELEASE'").run({ s: vuelta });
+  });
+
+  test('una bandera publicada tarde llega a las acciones que ya existían', () => {
+    const { upgrade } = upgradeMod;
+    // El fallo que esto vigila: la puesta al día sólo INSERTA lo que falta, y
+    // una acción que ya está en la base no se vuelve a insertar. Una columna
+    // de bandera añadida después nace en 0 para todas ellas, así que sin
+    // relleno la bandera no llega nunca —fue lo que dejó a "Reportar a
+    // Sistemas" sin preguntar si el huésped estaría en la habitación—.
+    //
+    // Se recrea ese momento quitando las columnas: la puesta al día las
+    // vuelve a añadir, y con ellas debe llegar lo que el catálogo declara.
+    const banderas = COLUMNAS_NUEVAS.filter(
+      (c) => c.table === 'movement_types' && c.ddl === 'INTEGER NOT NULL DEFAULT 0');
+    assert.ok(banderas.length, 'el catálogo debe tener banderas añadidas después');
+
+    // El correctivo de una sola vez ya se gastó en esta base (lo agotó la
+    // primera puesta al día de esta sección), así que lo único que puede
+    // sembrar las banderas aquí es el relleno de la columna.
+    assert.ok(one("SELECT 1 x FROM audit_log WHERE entity_id LIKE 'correctivo:%'"),
+      'el correctivo debe estar ya aplicado para que esta prueba mida el relleno');
+
+    for (const c of banderas) db.exec(`ALTER TABLE movement_types DROP COLUMN ${c.column}`);
+    upgrade({ quiet: true });
+
+    for (const m of MOVEMENT_TYPES) {
+      const fila = one('SELECT * FROM movement_types WHERE code = @code', { code: m.code });
+      for (const c of banderas) {
+        assert.equal(fila[c.column], m[c.column] ? 1 : 0,
+          `${m.name} debe quedar con ${c.column} = ${m[c.column] ? 1 : 0}`);
+      }
+    }
+    assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('los correctivos reparan lo que se publicó a medias, y sólo una vez', () => {
+    const { upgrade } = upgradeMod;
+    // En ESTA base los correctivos ya se gastaron: lo que la base tenga manda,
+    // y lo que el hotel cambie desde Administración se queda como lo dejó.
+    db.prepare("UPDATE movement_types SET asks_guest_present = 0 WHERE code = 'SYS_REPORT'").run();
+    assert.equal(upgrade({ quiet: true }).length, 0, 'un correctivo gastado no vuelve a actuar');
+    assert.equal(one("SELECT asks_guest_present v FROM movement_types WHERE code = 'SYS_REPORT'").v, 0,
+      'no deshace una decisión posterior del hotel');
+    db.prepare("UPDATE movement_types SET asks_guest_present = 1 WHERE code = 'SYS_REPORT'").run();
+
+    // Y sobre una base que nunca los pasó —la del hotel, actualizada con la
+    // versión en la que faltaban el relleno y el reparto del permiso—, los
+    // aplican. Va en su propio proceso porque hace falta una base sin el
+    // correctivo en la bitácora, y la bitácora es inmutable: no se puede
+    // borrar de aquí.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-correctivo-'));
+    const { CDH_DB_FILE, ...limpio } = process.env;
+    const guion = `
+      const { seed } = await import('./server/db/seed.js');
+      seed({ quiet: true });
+      const { db, one } = await import('./server/lib/db.js');
+      // La base del hotel: las banderas nunca llegaron y Recepción se quedó
+      // sin el permiso que el catálogo le asigna.
+      db.exec("UPDATE movement_types SET asks_guest_present = 0, target_from_clean = 0");
+      db.exec(\`DELETE FROM role_permissions
+                 WHERE role_id = (SELECT id FROM roles WHERE code = 'RECEPCION')
+                   AND permission_id = (SELECT id FROM permissions WHERE code = 'room.status')\`);
+      const { upgrade } = await import('./server/db/upgrade.js');
+      const primera = upgrade({ quiet: true });
+      const segunda = upgrade({ quiet: true });
+      const tiene = (rol, permiso) => !!one(\`SELECT 1 x FROM role_permissions rp
+          JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
+         WHERE r.code = @rol AND p.code = @permiso\`, { rol, permiso });
+      console.log(JSON.stringify({
+        grupos: primera.map((a) => a.grupo),
+        segunda: segunda.length,
+        sys: one("SELECT asks_guest_present v FROM movement_types WHERE code = 'SYS_REPORT'").v,
+        limpieza: one("SELECT target_from_clean v FROM movement_types WHERE code = 'CLEAN_DONE'").v,
+        recepcionCambiaEstado: tiene('RECEPCION', 'room.status'),
+      }));`;
+    const r = childProcess.spawnSync(process.execPath, ['--input-type=module', '-e', guion], {
+      cwd: path.resolve(import.meta.dirname, '..'), encoding: 'utf8',
+      env: { ...limpio, CDH_DATA_DIR: dir, CDH_SEED_PASSWORD: 'Cli#Prueba2026' },
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout.trim().split('\n').pop());
+    assert.ok(out.grupos.includes('Bandera que no había llegado'), 'debe anunciar las banderas que corrigió');
+    assert.ok(out.grupos.includes('Permiso que faltaba en el rol'), 'y el permiso que repartió');
+    assert.equal(out.sys, 1, 'reportar a Sistemas vuelve a preguntar si el huésped estará');
+    assert.equal(out.limpieza, 1);
+    assert.equal(out.recepcionCambiaEstado, true, 'Recepción puede reportar a Sistemas y a Mantenimiento');
+    assert.equal(out.segunda, 0, 'los correctivos se gastan: la segunda pasada no cambia nada');
   });
 
   test('la simulación no escribe nada', () => {
@@ -989,6 +1165,158 @@ describe('Estados de Arpón y el dato del huésped', () => {
     assert.equal(r.aplicadas.length, 1, 'sólo la que esperaba limpieza');
     assert.equal(r.omitidas.length, 2);
     assert.ok(r.omitidas.every((o) => o.motivo === 'no esperaba limpieza'));
+  });
+});
+
+describe('Centro de solicitudes de limpieza', () => {
+  const pedir = (numero, quien, priority, note = null) => cleaning.requestCleaning({
+    roomId: getRoomByNumber(String(numero)).id, user: user(quien), priorityCode: priority, note,
+  });
+  const cola = () => cleaning.listRequests({ status: 'pendiente' });
+
+  test('Recepción pide, y la solicitud queda en cola con su movimiento', () => {
+    const room = getRoomByNumber('901');
+    const r = pedir(901, 'recepcion', 'ALTA', 'El huésped llega a las 3.');
+    assert.equal(r.creada, true);
+    assert.equal(r.request.status, 'pendiente');
+    assert.equal(r.request.priority_code, 'ALTA');
+    assert.equal(r.request.requested_by_name, 'Recepción Turno A');
+
+    // El movimiento vive en el expediente de la habitación, como todo.
+    const m = one('SELECT * FROM movements WHERE id = @id', { id: r.request.movement_id });
+    assert.equal(m.action_code, 'CLEAN_REQUEST');
+    assert.equal(m.room_id, room.id);
+    assert.match(m.comment, /Alta/);
+    assert.match(m.comment, /llega a las 3/);
+  });
+
+  test('avisa a Ama de Llaves, que es quien la atiende', () => {
+    const r = pedir(902, 'recepcion', 'MEDIA');
+    const n = one('SELECT * FROM notifications WHERE movement_id = @id', { id: r.request.movement_id });
+    assert.ok(n, 'una solicitud sin aviso no llega a nadie');
+    const destinos = all(`
+      SELECT d.code FROM notification_recipients nr
+        JOIN departments d ON d.id = nr.department_id
+       WHERE nr.notification_id = @id`, { id: n.id }).map((x) => x.code);
+    assert.ok(destinos.includes('AMA'), `debía avisar a Ama de Llaves: ${destinos.join(', ')}`);
+  });
+
+  test('pedir dos veces no duplica el trabajo: sube la prioridad o no cambia nada', () => {
+    pedir(903, 'recepcion', 'BAJA');
+    const subida = pedir(903, 'recepcion', 'URGENTE', 'El huésped está en el lobby.');
+    assert.equal(subida.creada, false);
+    assert.equal(subida.elevada, true);
+    assert.equal(subida.request.priority_code, 'URGENTE');
+
+    const otra = pedir(903, 'recepcion', 'MEDIA');
+    assert.equal(otra.elevada, false, 'una prioridad menor no rebaja la que ya había');
+    assert.equal(otra.request.priority_code, 'URGENTE');
+
+    assert.equal(
+      one("SELECT COUNT(*) n FROM cleaning_requests WHERE room_id = @id AND status = 'pendiente'",
+        { id: getRoomByNumber('903').id }).n, 1, 'una habitación, una sola solicitud en cola');
+  });
+
+  test('la cola pone primero lo urgente y, a igual prioridad, lo que lleva más esperando', () => {
+    const pendientes = cola().filter((s) => ['901', '902', '903'].includes(s.room_number));
+    assert.deepEqual(pendientes.map((s) => s.room_number), ['903', '901', '902'],
+      'urgente, luego alta, luego media');
+  });
+
+  test('limpiar la habitación cierra la solicitud sola, sin un movimiento de más', () => {
+    const room = getRoomByNumber('904');
+    recordMovement({ roomId: room.id, user: user('supervisor'), statusCode: 'SALIDA' });
+    pedir(904, 'recepcion', 'ALTA');
+    const antes = one('SELECT COUNT(*) n FROM movements WHERE room_id = @id', { id: room.id }).n;
+
+    const limpia = recordMovement({ roomId: room.id, user: user('amadellaves'), movementTypeCode: 'CLEAN_DONE' });
+    assert.ok(limpia.cleaningRequestClosed, 'la limpieza debe cerrar la solicitud');
+
+    const s = one("SELECT * FROM cleaning_requests WHERE room_id = @id ORDER BY id DESC LIMIT 1", { id: room.id });
+    assert.equal(s.status, 'atendida');
+    assert.equal(s.closed_by_name, 'Jefa de Ama de Llaves');
+    assert.equal(s.closed_movement_id, limpia.primaryId);
+    assert.equal(one('SELECT COUNT(*) n FROM movements WHERE room_id = @id', { id: room.id }).n, antes + 1,
+      'el movimiento de la limpieza ya cuenta lo ocurrido: no hace falta otro');
+  });
+
+  test('cancelar exige un motivo y lo deja escrito', () => {
+    const r = pedir(905, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.cancelRequest({ id: r.request.id, user: user('recepcion') }),
+      (e) => e.status === 400 && /necesita un motivo/.test(e.message));
+
+    const cancelada = cleaning.cancelRequest({
+      id: r.request.id, user: user('recepcion'), reason: 'El huésped ya no llega.',
+    });
+    assert.equal(cancelada.status, 'cancelada');
+    assert.equal(cancelada.closed_reason, 'El huésped ya no llega.');
+    assert.equal(
+      one('SELECT action_code FROM movements WHERE id = @id', { id: cancelada.closed_movement_id }).action_code,
+      'CLEAN_REQUEST_CANCEL');
+  });
+
+  test('una solicitud cerrada no se cierra dos veces', () => {
+    const r = pedir(906, 'recepcion', 'MEDIA');
+    cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') });
+    assert.throws(
+      () => cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') }),
+      (e) => e.status === 409 && /ya está atendida/.test(e.message));
+  });
+
+  test('la solicitud va en un solo sentido: pide Recepción, atiende Ama de Llaves', () => {
+    // Ama de Llaves no se pide trabajo a sí misma.
+    assert.throws(
+      () => pedir(908, 'amadellaves', 'BAJA'),
+      (e) => e.status === 403 && /es de Recepción/.test(e.message));
+
+    // Y Recepción no se da por atendida su propia solicitud.
+    const r = pedir(908, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.attendRequest({ id: r.request.id, user: user('recepcion') }),
+      (e) => e.status === 403 && /es de Ama de Llaves/.test(e.message));
+    assert.equal(cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') }).status, 'atendida');
+  });
+
+  test('cancelar lo pueden los dos lados: a ambos les sobra el trabajo', () => {
+    const deRecepcion = pedir(911, 'recepcion', 'MEDIA');
+    assert.equal(cleaning.cancelRequest({
+      id: deRecepcion.request.id, user: user('recepcion'), reason: 'El huésped ya no llega.',
+    }).status, 'cancelada');
+
+    const otra = pedir(912, 'recepcion', 'MEDIA');
+    assert.equal(cleaning.cancelRequest({
+      id: otra.request.id, user: user('amadellaves'), reason: 'Ya estaba limpia.',
+    }).status, 'cancelada');
+
+    // Quien no tiene ninguno de los dos permisos, no.
+    const ajeno = pedir(913, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.cancelRequest({ id: ajeno.request.id, user: user('mantenimiento'), reason: 'x' }),
+      (e) => e.status === 403);
+  });
+
+  test('entregar una habitación limpia la saca de la venta', () => {
+    const room = getRoomByNumber('910');
+    assert.equal(room.counts_ready, 1, 'parte limpia y libre');
+    const r = recordMovement({ roomId: room.id, user: user('recepcion'), movementTypeCode: 'DELIVER',
+      comment: 'A nombre de Pérez.' });
+    assert.equal(r.room.status_code, 'ENTRADA_NUEVA');
+    assert.equal(r.room.counts_ready, 0, 'entregada deja de contar como disponible');
+  });
+
+  test('la entrega avisa de que hay que repetirla en el PMS', () => {
+    const aviso = cleaning.pmsNotice();
+    assert.match(aviso, /Arpón Enterprise/);
+    const entrega = one("SELECT warns_pms FROM movement_types WHERE code = 'DELIVER'");
+    assert.equal(entrega.warns_pms, 1, 'la acción tiene que pedir el aviso');
+  });
+
+  test('el resumen cuenta lo pendiente y nombra lo más urgente', () => {
+    const resumen = cleaning.pendingSummary();
+    assert.equal(resumen.total, cola().length);
+    assert.equal(resumen.masUrgente.name, 'Urgente');
+    assert.equal(resumen.porPrioridad[0].code, 'URGENTE', 'el reparto va de más urgente a menos');
   });
 });
 

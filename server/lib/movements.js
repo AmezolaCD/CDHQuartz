@@ -4,6 +4,7 @@ import { stamp } from './time.js';
 import { audit, clientIp } from './audit.js';
 import { getSettingBool, getSettingNumber } from './settings.js';
 import { openIncidentsForRoom } from './stats.js';
+import { closeRequestOnClean } from './cleaning.js';
 
 export class MovementError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -355,6 +356,14 @@ export function recordMovement({
       last_movement_id: primaryId,
     });
 
+    // ------------------------- 3b. La solicitud de limpieza pendiente
+    // Quien limpia no tiene que acordarse además de cerrar la solicitud: la
+    // cierra el propio movimiento de la limpieza. No deja un movimiento
+    // aparte, porque no ocurrió nada aparte.
+    const solicitudAtendida = mtype?.closes_cleaning_request
+      ? closeRequestOnClean({ room, user, movementId: primaryId, t })
+      : null;
+
     // ---------------------------------------------- 4. Fotografías
     const attachmentIds = [];
     for (const p of photos) {
@@ -451,6 +460,7 @@ export function recordMovement({
       room: getRoom(room.id),
       statusChanged: !!newStatus,
       detailsChanged: detailChanges.length,
+      cleaningRequestClosed: solicitudAtendida?.id ?? null,
     };
   })();
 }

@@ -1,6 +1,7 @@
 import { all, one } from './db.js';
 import { getSettingNumber, getSetting } from './settings.js';
 import { localDate, periodRange } from './time.js';
+import { pendingSummary } from './cleaning.js';
 
 // Una incidencia está ABIERTA cuando el valor actual de un campo coincide con
 // alguno de los valores marcados como incidencia en su configuración.
@@ -139,6 +140,7 @@ export function overview() {
     `SELECT COUNT(*) AS n FROM movements WHERE local_date = @d AND is_incident = 1`, { d: today }).n;
 
   const incidents = openIncidents();
+  const solicitudes = pendingSummary();
   const target = getSettingNumber('target_room_count', 155);
 
   return {
@@ -151,6 +153,9 @@ export function overview() {
     bloqueadas: totals.bloqueadas ?? 0,
     pendientes: totals.pendientes ?? 0,
     requierenAtencion: totals.atencion ?? 0,
+    solicitudesPendientes: solicitudes.total,
+    solicitudUrgente: solicitudes.masUrgente?.name ?? null,
+    solicitudesPorPrioridad: solicitudes.porPrioridad,
     incidenciasAbiertas: incidents.length,
     habitacionesConIncidencia: new Set(incidents.map((i) => i.room_id)).size,
     movimientosHoy: movementsToday,

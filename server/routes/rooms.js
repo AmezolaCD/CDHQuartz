@@ -7,6 +7,7 @@ import {
   getFieldMap, isIncidentValue, canWriteCategory,
 } from '../lib/movements.js';
 import { openIncidentsByRoom, recurrence, thresholds } from '../lib/stats.js';
+import { pendingByRoom, pendingRequest, pendingSummary, pmsNotice, priorities } from '../lib/cleaning.js';
 import { getSettingNumber } from '../lib/settings.js';
 
 const router = express.Router();
@@ -19,10 +20,18 @@ function decorate(rooms) {
   const incidents = openIncidentsByRoom();
   const rec = recurrence({ minCount: thresholds()[0] ?? 2 });
   const recByRoom = new Map(rec.rooms.map((r) => [r.room_id, r.incidents]));
+  const solicitudes = pendingByRoom();
   return rooms.map((r) => {
     const inc = incidents.get(r.id) ?? [];
+    const solicitud = solicitudes.get(r.id) ?? null;
     return {
       ...r,
+      cleaningRequest: solicitud && {
+        id: solicitud.id, priority: solicitud.priority_name, code: solicitud.priority_code,
+        color: solicitud.priority_color, icon: solicitud.priority_icon,
+        weight: solicitud.priority_weight, since: solicitud.requested_at,
+        by: solicitud.requested_by_name, note: solicitud.note,
+      },
       incidentCount: inc.length,
       incidents: inc.map((i) => ({ field: i.field_label, value: i.value, category: i.category_name })),
       recurrenceCount: recByRoom.get(r.id) ?? 0,
@@ -73,8 +82,10 @@ router.get('/floors/:id/map', asyncRoute((req, res) => {
       rooms: rooms.filter((r) => r.active).length,
       inactive: rooms.filter((r) => !r.active).length,
       attention: rooms.filter((r) => r.needsAttention).length,
+      cleaningRequests: rooms.filter((r) => r.cleaningRequest).length,
     },
     statusSummary,
+    cleaningSummary: pendingSummary(floor.id),
   });
 }));
 
@@ -199,7 +210,12 @@ router.get('/:id', asyncRoute((req, res) => {
     })),
     recurrence: { window, incidents: recentIncidents, thresholds: thresholds() },
     movementCount: one('SELECT COUNT(*) AS n FROM movements WHERE room_id = @id', { id: room.id }).n,
+    cleaningRequest: pendingRequest(room.id),
+    cleaningPriorities: req.user.permissions.includes('cleaning.request') ? priorities() : [],
+    pmsNotice: pmsNotice(),
     canEditStatus: req.user.permissions.includes('room.status'),
+    canRequestCleaning: req.user.permissions.includes('cleaning.request'),
+    canAttendCleaning: req.user.permissions.includes('cleaning.attend'),
     canCreateMovement: req.user.permissions.includes('movement.create'),
   });
 }));
@@ -308,7 +324,7 @@ router.get('/meta/quick-actions', asyncRoute((req, res) => {
            mt.allows_photo, mt.is_incident, mt.is_quick_action, mt.cross_department, mt.sort_order,
            c.id AS category_id, c.code AS category_code, c.name AS category_name,
            c.department_id AS category_department_id,
-           mt.target_from_clean, mt.asks_guest_present,
+           mt.target_from_clean, mt.asks_guest_present, mt.warns_pms,
            s.code AS target_status_code, s.name AS target_status_name
       FROM movement_types mt
       LEFT JOIN categories c ON c.id = mt.category_id
@@ -325,6 +341,7 @@ router.get('/meta/quick-actions', asyncRoute((req, res) => {
         requiresComment: !!a.requires_comment,
         requiresPhoto: !!a.requires_photo,
         asksGuestPresent: !!a.asks_guest_present,
+        warnsPms: !!a.warns_pms,
       })),
   });
 }));
