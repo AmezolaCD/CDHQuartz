@@ -173,16 +173,24 @@ código.
 
 ## Los reportes y la venta
 
-Un reporte **no mueve el estado**: el estado lo lleva Ama de Llaves y refleja el
-ciclo del PMS. Lo que impide vender una habitación es la incidencia abierta, no
-un estado especial.
+Un reporte **no mueve el estado**. Ni el que se levanta con una acción, ni el
+que abre un campo marcado en falla: los dos abren su pendiente y dejan la
+habitación donde estaba, marcada en el rack con **«Reporte abierto»**.
 
-Con una excepción necesaria: si la habitación estaba en un estado de venta
-(`counts_ready`) cuando se levanta el reporte de un área que bloquea, sale de la
-venta en ese mismo movimiento, al `pending_status_id` de la categoría (*Fuera de
-servicio*). Sin ella, el guardián vigilaría la puerta sin expulsar a quien ya
-estaba dentro: una habitación ya disponible se quedaría a la venta con el
-reporte abierto. Es el mismo patrón con que un campo en falla la retira.
+*Fuera de servicio* es otra cosa: es lo que se hace con una habitación que tiene
+un problema grave, de los que duran un día o más. Eso lo decide quien opera, y
+tiene su propia acción. Que el sistema mandara ahí una habitación por un foco
+fundido confundía dos situaciones muy distintas para quien mira el rack.
+
+Una habitación puede entonces estar *Disponible limpio* con un reporte abierto,
+y eso es deliberado: la limpieza de una salida se termina y se registra aunque
+la TV siga sin señal —si no, el trabajo hecho no se podría anotar—, y quien
+vende la ve con su aviso al lado.
+
+El mecanismo anterior sigue existiendo, apagado: si una categoría declara
+`pending_status_id`, un reporte suyo sí manda la habitación a ese estado. El
+catálogo lo deja vacío —el caso normal— y desde Administración puede volver a
+ponerse por categoría, sin tocar código.
 
 ## Incidencias
 
@@ -195,14 +203,20 @@ Una incidencia está **abierta** por cualquiera de dos vías:
    reporte a Mantenimiento o a Sistemas, un daño, un bloqueo— y nada posterior
    la cerró.
 
-Un reporte se cierra de tres maneras, todas ellas un movimiento del historial,
-nunca un borrado:
+Un reporte se cierra de dos maneras, las dos un movimiento del historial, nunca
+un borrado:
 
 | Cómo | Qué cierra |
 |---|---|
 | Acción de cierre de su misma área (*Mantenimiento completado*) | Lo pendiente de esa categoría |
 | Acción de cierre con `closes_scope = 'habitacion'` (*Liberar habitación*) | Todo lo pendiente de la habitación |
-| Un cambio de estado que devuelve la habitación al servicio (`counts_ready`) | Todo lo pendiente de la habitación |
+
+Había una tercera: devolver la habitación a un estado de venta. Tenía sentido
+cuando un reporte la sacaba de servicio —volver al servicio significaba que el
+problema estaba resuelto—, pero desde que el reporte no mueve el estado, una
+habitación puede estar *Disponible limpio* con su reporte abierto. Cerrarlo por
+el estado borraría el pendiente sin que nadie lo hubiera atendido, así que ya
+no cierra nada.
 
 Los movimientos que cambiaron un campo se excluyen del conteo por reporte: el
 valor actual del campo ya los representa, y contarlos otra vez sería contarlos
@@ -210,44 +224,26 @@ dos veces.
 
 ## No se libera con un pendiente abierto
 
-Una habitación no puede pasar a un estado de servicio (`counts_ready`:
-*Disponible*, *Inspeccionada*) mientras tenga una incidencia abierta de una
-categoría marcada con `blocks_release` —hoy Mantenimiento y Sistemas—, venga
-de un reporte o del valor de un campo. La comprobación vive en
-`recordMovement()`, la única puerta de escritura, así que vale igual para la
-acción rápida, el cambio manual de estado y el cambio en bloque; en un lote,
-una sola habitación con pendiente detiene el lote entero.
+**Liberar habitación** da por resueltos todos los pendientes de esa habitación
+(`closes_incident` con `closes_scope = 'habitacion'`). Por eso se rechaza
+mientras haya una incidencia abierta de una categoría marcada con
+`blocks_release` —hoy Mantenimiento y Sistemas—, venga de un reporte o del valor
+de un campo: darla por resuelta sin que nadie la atendiera sería borrar el
+trabajo en vez de hacerlo. La comprobación vive en `recordMovement()`, la única
+puerta de escritura, así que vale igual para la acción rápida y para el cambio
+en bloque; en un lote, una sola habitación con pendiente detiene el lote entero.
 
-Lo que **no** bloquea: limpiar, inspeccionar el trabajo de limpieza como paso
-intermedio, comentar, adjuntar fotos o reportar. Lo único vedado es devolver
-la habitación al servicio. La salida es cerrar el pendiente desde el área
-responsable, que es un movimiento del historial como cualquier otro.
+Lo vigilado es **el cierre, no el estado**. Antes se vigilaba el paso a un
+estado de venta, porque un reporte sacaba la habitación de servicio y volver al
+servicio cerraba el pendiente solo. Desde que el reporte no mueve el estado, esa
+puerta se cerró por otro lado: **volver a un estado de venta ya no cierra nada**
+(ver *Incidencias*). Así, terminar una limpieza no tropieza con la regla, y el
+pendiente sigue abierto y a la vista hasta que alguien lo cierre.
 
-Qué categorías bloquean se configura desde Administración: es una casilla de
-la categoría, no una lista de códigos en el código.
-
-### El otro lado de la regla: la habitación que ya estaba en servicio
-
-Impedir el paso a un estado de servicio no basta: una habitación **ya
-disponible** a la que se le marca *Plomería: Falla* seguiría a la venta, porque
-ese guardado no cambia el estado. Por eso, cuando un campo de una categoría que
-bloquea pasa a un valor de incidencia y la habitación está en servicio, el
-mismo guardado la retira: pasa al `pending_status_id` de esa categoría
-(*Mantenimiento pendiente*, *Sistemas pendiente*) y deja un movimiento propio
-que lo explica, junto al del campo.
-
-Tres decisiones de esa regla:
-
-- **No exige `room.status`.** Lo provoca el sistema al detectar la falla, no lo
-  pide el usuario; quien reporta puede no tener ese permiso, y dejar la
-  habitación a la venta sería lo inseguro.
-- **Sólo afecta a la que estaba en servicio.** Una habitación en limpieza o en
-  mantenimiento sigue su ciclo sin sobresaltos.
-- **Pedir a la vez un estado de servicio y reportar la falla se rechaza**, en
-  lugar de decidir por el usuario: la petición se contradice a sí misma.
-
-Corregir el campo **no** devuelve sola la habitación al servicio: alguien tiene
-que liberarla, que es justo el paso que la regla anterior custodia.
+Lo que **no** bloquea: limpiar, comentar, adjuntar fotos, reportar, cambiar el
+estado a mano, ni cerrar lo de su propia área —«Sistemas completado» es
+justamente atenderlo—. Qué categorías bloquean se configura desde
+Administración: es una casilla de la categoría, no una lista de códigos.
 
 ## La pantalla de registrar
 

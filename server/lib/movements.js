@@ -138,29 +138,40 @@ export function recordMovement({
     const requestedStatus = statusCode ?? destinoAlLimpiar ?? (mtype?.target_status_id
       ? one('SELECT code FROM room_statuses WHERE id = @id', { id: mtype.target_status_id })?.code
       : null);
-    if (requestedStatus && requestedStatus !== room.status_code) {
-      if (!has(user, 'room.status')) throw new MovementError('No tiene permiso para cambiar el estado de la habitación.', 403);
-      newStatus = one('SELECT * FROM room_statuses WHERE code = @c AND active = 1', { c: requestedStatus });
-      if (!newStatus) throw new MovementError(`Estado desconocido o inactivo: ${requestedStatus}`, 400);
+    if (requestedStatus) {
+      const solicitado = one('SELECT * FROM room_statuses WHERE code = @c AND active = 1', { c: requestedStatus });
+      if (!solicitado) throw new MovementError(`Estado desconocido o inactivo: ${requestedStatus}`, 400);
 
-      // No se libera una habitación con un pendiente abierto de un área que
-      // bloquea (Mantenimiento y Sistemas, configurable por categoría). La
-      // comprobación vive en la única puerta de escritura, así que vale igual
-      // para la acción rápida, el cambio manual y el cambio en bloque.
-      if (newStatus.counts_ready) {
-        const bloqueantes = openIncidentsForRoom(room.id).filter((i) => i.blocks_release);
-        if (bloqueantes.length) {
-          // El valor suele ser el comentario del reporte y ya trae su punto:
-          // añadir otro deja "TV sin señal..".
-          const detalle = bloqueantes
-            .map((i) => `${i.category_name ?? 'Sin categoría'}: ${i.field_label}${
-              i.value ? ` — ${String(i.value).replace(/\.$/, '')}` : ''}`)
-            .join('; ');
-          throw new MovementError(
-            `La habitación ${room.number} no puede quedar como "${newStatus.name}": tiene ${
-              bloqueantes.length === 1 ? 'un pendiente' : `${bloqueantes.length} pendientes`
-            } sin cerrar. ${detalle}.`, 409);
-        }
+      if (solicitado.id !== room.status_id) {
+        if (!has(user, 'room.status')) throw new MovementError('No tiene permiso para cambiar el estado de la habitación.', 403);
+        newStatus = solicitado;
+      }
+    }
+
+    // No se LIBERA una habitación con un pendiente abierto de un área que
+    // bloquea (Mantenimiento y Sistemas, configurable por categoría).
+    //
+    // Lo que se vigila es el cierre, no el estado: "Liberar habitación" da por
+    // resueltos todos los pendientes de la habitación, y hacerlo sin que nadie
+    // los haya atendido sería borrar el trabajo en vez de hacerlo. Estar a la
+    // venta con un reporte abierto sí se puede —es lo que anuncia la leyenda
+    // del rack—, así que terminar una limpieza no tropieza con esto. Cerrar lo
+    // de su propia área ("Sistemas completado") tampoco: eso es atenderlo.
+    // La comprobación vive en la única puerta de escritura, así que vale igual
+    // para la acción rápida, el cambio manual y el cambio en bloque.
+    if (mtype?.closes_incident && (mtype.closes_scope ?? 'categoria') === 'habitacion') {
+      const bloqueantes = openIncidentsForRoom(room.id).filter((i) => i.blocks_release);
+      if (bloqueantes.length) {
+        // El valor suele ser el comentario del reporte y ya trae su punto:
+        // añadir otro deja "TV sin señal..".
+        const detalle = bloqueantes
+          .map((i) => `${i.category_name ?? 'Sin categoría'}: ${i.field_label}${
+            i.value ? ` — ${String(i.value).replace(/\.$/, '')}` : ''}`)
+          .join('; ');
+        throw new MovementError(
+          `La habitación ${room.number} no se puede liberar: tiene ${
+            bloqueantes.length === 1 ? 'un pendiente' : `${bloqueantes.length} pendientes`
+          } sin cerrar. ${detalle}.`, 409);
       }
     }
 
@@ -184,22 +195,22 @@ export function recordMovement({
       detailChanges.push({ field, oldValue, newValue, current });
     }
 
-    // Una habitación EN SERVICIO a la que se le detecta una falla de un área
-    // que bloquea sale de venta en el mismo guardado. Sin esto, marcar
-    // "Plomería: Falla" dejaba la habitación disponible: el guardián de la
-    // liberación vigila el paso a un estado de servicio, no expulsa a la que
-    // ya está ahí.
+    // Un reporte NO mueve el estado: abre su pendiente y la habitación se queda
+    // donde estaba, marcada con "Reporte abierto". Fuera de servicio es una
+    // decisión de quien opera, para un problema que dura un día o más, y por
+    // eso tiene su propia acción.
+    //
+    // El mecanismo anterior sigue disponible, apagado: si una categoría declara
+    // `pending_status_id` desde Administración, un reporte suyo sí manda ahí a
+    // la habitación que estuviera a la venta. El catálogo lo deja vacío.
     let retiradaPorFalla = null;
     const fallasNuevas = detailChanges.filter(
       (ch) => ch.field.blocks_release && isIncidentValue(ch.field, ch.newValue));
-    // Un reporte a un área que bloquea abre el mismo pendiente que un campo en
-    // falla, aunque no toque ningún campo. Como el reporte ya no mueve el
-    // estado, sin esto una habitación que YA estaba a la venta se quedaría ahí
-    // con el reporte abierto: el guardián vigila el paso a un estado de venta,
-    // no expulsa a la que ya está dentro.
     const reporteBloqueante = !!(mtype?.is_incident && mtype.category_blocks_release);
+    const pendiente = fallasNuevas.find((ch) => ch.field.pending_status_id);
+    const idPendiente = pendiente?.field.pending_status_id ?? mtype?.category_pending_status_id ?? null;
 
-    if (fallasNuevas.length || reporteBloqueante) {
+    if (idPendiente && (fallasNuevas.length || reporteBloqueante)) {
       const destino = newStatus ?? { counts_ready: room.counts_ready, name: room.status_name };
       if (destino.counts_ready) {
         // Pedir explícitamente un estado de servicio mientras se reporta la
@@ -211,14 +222,9 @@ export function recordMovement({
           throw new MovementError(
             `La habitación ${room.number} no puede quedar como "${newStatus.name}": en este mismo registro se reporta ${motivo}.`, 409);
         }
-        const pendiente = fallasNuevas.find((ch) => ch.field.pending_status_id);
-        const idPendiente = pendiente?.field.pending_status_id ?? mtype?.category_pending_status_id ?? null;
-        const fuera = idPendiente
-          ? one('SELECT * FROM room_statuses WHERE id = @id AND active = 1', { id: idPendiente })
-          : one("SELECT * FROM room_statuses WHERE code = 'FUERA_SERVICIO' AND active = 1");
+        const fuera = one('SELECT * FROM room_statuses WHERE id = @id AND active = 1', { id: idPendiente });
         // El cambio lo provoca el sistema al detectar la falla, no lo pide el
-        // usuario: no exige `room.status`. Quien reporta puede no tener ese
-        // permiso, y dejar la habitación a la venta sería lo inseguro.
+        // usuario: no exige `room.status`.
         if (fuera && fuera.id !== room.status_id) {
           newStatus = fuera;
           retiradaPorFalla = fallasNuevas[0] ?? { field: { label: mtype.name.toLowerCase() } };

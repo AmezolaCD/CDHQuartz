@@ -16,7 +16,14 @@ export function roomCard(r) {
       title="Limpieza solicitada · ${esc(r.cleaningRequest.priority)} — pidió ${esc(r.cleaningRequest.by)}">${
       icon('spray', 10)}${esc(r.cleaningRequest.priority)}</span>`);
   }
-  if (r.incidentCount) flags.push(`<span class="flag inc" title="Incidencias abiertas">${icon('alert', 10)}${r.incidentCount}</span>`);
+  // Un reporte abierto se dice con todas sus letras: un número solo no
+  // distingue "hay algo que atender" de "la habitación está fuera de servicio",
+  // y son dos cosas muy distintas para quien mira el rack.
+  if (r.incidentCount) {
+    flags.push(`<span class="flag inc" title="${
+      r.incidentCount === 1 ? 'Un reporte abierto' : `${r.incidentCount} reportes abiertos`}">${
+      icon('alert', 10)}<span>${r.incidentCount === 1 ? 'Reporte abierto' : `${r.incidentCount} reportes`}</span></span>`);
+  }
   if (r.recurrenceCount >= 2) flags.push(`<span class="flag rec" title="Reincidente">${icon('repeat', 10)}${r.recurrenceCount}</span>`);
   if (!r.incidentCount && r.counts_attention) flags.push(`<span class="flag att">${icon('bell', 10)}</span>`);
   return `<button class="room ${r.active ? '' : 'inactive'}" style="--st:${esc(r.status_color)}"
