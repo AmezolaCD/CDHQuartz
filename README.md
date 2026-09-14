@@ -340,8 +340,10 @@ de Ama de Llaves de Arpón se leen una junto a la otra sin traducir nada.
 queda *Ocupado limpio* y una *Salida* queda *Disponible limpio*. Una acción con
 un único destino mentiría en la mitad de los casos.
 
-**Centro de solicitudes de limpieza.** Recepción pide y Ama de Llaves atiende,
-con prioridad *Baja*, *Media*, *Alta* o *Urgente*. La cola se ordena sola: lo
+**Centro de solicitudes de limpieza.** Va en un solo sentido: **Recepción pide**
+(`cleaning.request`) y **Ama de Llaves atiende** (`cleaning.attend`). Cancelar
+lo pueden los dos lados —a los dos les sobra el trabajo—. Con prioridad *Baja*,
+*Media*, *Alta* o *Urgente*. La cola se ordena sola: lo
 más urgente primero y, a igual prioridad, lo que lleva más tiempo esperando.
 Una habitación no puede tener dos solicitudes a la vez —la segunda sube la
 prioridad de la primera en vez de duplicar el trabajo— y **registrar la

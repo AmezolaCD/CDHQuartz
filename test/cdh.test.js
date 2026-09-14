@@ -183,6 +183,23 @@ describe('Permisos y alcance por departamento', () => {
       (e) => e.status === 403);
   });
 
+  test('Recepción reporta a Mantenimiento y a Sistemas, aunque no sean su área', () => {
+    // Son reportes hacia otra área: cualquiera puede levantarlos. Cerrarlos
+    // sigue siendo del área responsable.
+    for (const [numero, code] of [['717', 'MAINT_REPORT'], ['718', 'SYS_REPORT']]) {
+      const r = recordMovement({
+        roomId: getRoomByNumber(numero).id, user: user('recepcion'), movementTypeCode: code,
+        comment: 'Lo reporta Recepción.', guestPresent: 'si',
+      });
+      assert.equal(r.movementIds.length, 1, `${code} debería poder registrarse`);
+    }
+    // Pero no cierra el trabajo de esas áreas.
+    assert.throws(
+      () => recordMovement({ roomId: getRoomByNumber('717').id, user: user('recepcion'),
+        movementTypeCode: 'MAINT_DONE', comment: 'x' }),
+      (e) => e.status === 403);
+  });
+
   test('Recepción registra la entrada y la salida, pero no campos de otra área', () => {
     const room = getRoomByNumber('711');
     const res = recordMovement({ roomId: room.id, user: user('recepcion'),
@@ -1061,7 +1078,7 @@ describe('Centro de solicitudes de limpieza', () => {
     assert.equal(subida.elevada, true);
     assert.equal(subida.request.priority_code, 'URGENTE');
 
-    const otra = pedir(903, 'amadellaves', 'MEDIA');
+    const otra = pedir(903, 'recepcion', 'MEDIA');
     assert.equal(otra.elevada, false, 'una prioridad menor no rebaja la que ya había');
     assert.equal(otra.request.priority_code, 'URGENTE');
 
@@ -1117,13 +1134,35 @@ describe('Centro de solicitudes de limpieza', () => {
       (e) => e.status === 409 && /ya está atendida/.test(e.message));
   });
 
-  test('sin el permiso no se solicita limpieza', () => {
-    const sinPermiso = {
-      ...user('amadellaves'),
-      permissions: user('amadellaves').permissions.filter((p) => p !== 'cleaning.request'),
-    };
+  test('la solicitud va en un solo sentido: pide Recepción, atiende Ama de Llaves', () => {
+    // Ama de Llaves no se pide trabajo a sí misma.
     assert.throws(
-      () => cleaning.requestCleaning({ roomId: getRoomByNumber('908').id, user: sinPermiso, priorityCode: 'BAJA' }),
+      () => pedir(908, 'amadellaves', 'BAJA'),
+      (e) => e.status === 403 && /es de Recepción/.test(e.message));
+
+    // Y Recepción no se da por atendida su propia solicitud.
+    const r = pedir(908, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.attendRequest({ id: r.request.id, user: user('recepcion') }),
+      (e) => e.status === 403 && /es de Ama de Llaves/.test(e.message));
+    assert.equal(cleaning.attendRequest({ id: r.request.id, user: user('amadellaves') }).status, 'atendida');
+  });
+
+  test('cancelar lo pueden los dos lados: a ambos les sobra el trabajo', () => {
+    const deRecepcion = pedir(911, 'recepcion', 'MEDIA');
+    assert.equal(cleaning.cancelRequest({
+      id: deRecepcion.request.id, user: user('recepcion'), reason: 'El huésped ya no llega.',
+    }).status, 'cancelada');
+
+    const otra = pedir(912, 'recepcion', 'MEDIA');
+    assert.equal(cleaning.cancelRequest({
+      id: otra.request.id, user: user('amadellaves'), reason: 'Ya estaba limpia.',
+    }).status, 'cancelada');
+
+    // Quien no tiene ninguno de los dos permisos, no.
+    const ajeno = pedir(913, 'recepcion', 'BAJA');
+    assert.throws(
+      () => cleaning.cancelRequest({ id: ajeno.request.id, user: user('mantenimiento'), reason: 'x' }),
       (e) => e.status === 403);
   });
 

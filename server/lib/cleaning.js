@@ -102,7 +102,7 @@ export function pmsNotice() {
  */
 export function requestCleaning({ roomId, user, req, priorityCode, note = null }) {
   if (!(user.permissions ?? []).includes('cleaning.request')) {
-    throw new MovementError('No tiene permiso para solicitar limpieza.', 403);
+    throw new MovementError('Solicitar limpieza es de Recepción.', 403);
   }
   const prioridad = priorityByCode(priorityCode);
   if (!prioridad) throw new MovementError(`Prioridad desconocida o inactiva: ${priorityCode}`, 400);
@@ -194,14 +194,17 @@ function cerrar({ id, user, req, estado, motivo, movementTypeCode }) {
 }
 
 export function attendRequest({ id, user, req, note = null }) {
-  if (!(user.permissions ?? []).includes('cleaning.request')) {
-    throw new MovementError('No tiene permiso para atender solicitudes de limpieza.', 403);
+  if (!(user.permissions ?? []).includes('cleaning.attend')) {
+    throw new MovementError('Atender una solicitud de limpieza es de Ama de Llaves.', 403);
   }
   return cerrar({ id, user, req, estado: 'atendida', motivo: note, movementTypeCode: 'CLEAN_REQUEST_DONE' });
 }
 
+// Cancelar lo puede quien pidió —el huésped ya no llega— y quien atiende —la
+// habitación ya estaba limpia—: a los dos les sobra el trabajo.
 export function cancelRequest({ id, user, req, reason = null }) {
-  if (!(user.permissions ?? []).includes('cleaning.request')) {
+  const suyo = user.permissions ?? [];
+  if (!suyo.includes('cleaning.request') && !suyo.includes('cleaning.attend')) {
     throw new MovementError('No tiene permiso para cancelar solicitudes de limpieza.', 403);
   }
   if (!String(reason ?? '').trim()) {

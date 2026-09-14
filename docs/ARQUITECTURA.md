@@ -131,6 +131,14 @@ Lo inmutable es el movimiento que cada cambio suyo deja en el expediente de la
 habitación, y por eso todo pasa por `recordMovement`: la solicitud hereda su
 auditoría, su notificación y su sello de tiempo sin duplicar nada.
 
+La solicitud va en **un solo sentido**, y eso son dos permisos, no uno:
+`cleaning.request` para pedir (Recepción) y `cleaning.attend` para atender
+(Ama de Llaves y Supervisión). Con un permiso único, Ama de Llaves podría
+pedirse trabajo a sí misma y Recepción podría darse por atendida su propia
+solicitud: ninguna de las dos cosas es lo que pasa en el piso. Cancelar admite
+cualquiera de los dos, porque tanto quien pide como quien atiende pueden
+descubrir que ese trabajo ya no hace falta.
+
 Lo que ordena la cola es `cleaning_priorities.weight`, no el nombre ni el
 color: el hotel puede intercalar una prioridad nueva entre dos existentes sin
 tocar código. A igual peso ordena la antigüedad, así que nada se queda al

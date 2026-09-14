@@ -450,6 +450,28 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 
+  test('Ama de Llaves atiende la cola pero no se pide trabajo a sí misma', async () => {
+    const { page } = await abrirSesion('amadellaves');
+    await page.evaluate(() => { location.hash = '#/limpieza'; });
+    await page.waitForSelector('[data-cola]');
+    await page.waitForTimeout(700);
+
+    assert.equal(await page.locator('[data-pedir]').count(), 0,
+      'solicitar limpieza es de Recepción');
+    assert.ok(await page.locator('[data-atender]').count() > 0,
+      'atender la cola sí es suyo');
+
+    // Y la atiende de verdad.
+    const antes = await page.locator('[data-cola] .solic').count();
+    await page.locator('[data-atender]').first().click();
+    await page.waitForSelector('#cerrarForm');
+    await page.locator('.modal-foot [type=submit]').click();
+    await page.waitForSelector('.toast.ok', { timeout: 10000 });
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator('[data-cola] .solic').count(), antes - 1);
+    await page.close();
+  });
+
   test('entregar una habitación limpia avisa del PMS antes de guardar', async () => {
     const { page } = await abrirSesion('recepcion');
     await page.evaluate(() => { location.hash = '#/limpieza'; });

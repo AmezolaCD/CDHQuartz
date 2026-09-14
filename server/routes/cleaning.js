@@ -48,6 +48,9 @@ router.get('/', asyncRoute((req, res) => {
     readyTotal: listasParaEntregar(floorId).length,
     pmsNotice: pmsNotice(),
     canRequest: req.user.permissions.includes('cleaning.request'),
+    canAttend: req.user.permissions.includes('cleaning.attend'),
+    canCancel: req.user.permissions.includes('cleaning.request')
+      || req.user.permissions.includes('cleaning.attend'),
     maxRooms: getSettingNumber('bulk_max_rooms', 40),
   });
 }));
@@ -90,14 +93,16 @@ router.post('/requests', requirePermission('cleaning.request'), asyncRoute((req,
   res.status(201).json({ creadas, elevadas, sinCambio, summary: pendingSummary() });
 }));
 
-router.post('/requests/:id/attend', requirePermission('cleaning.request'), asyncRoute((req, res) => {
+router.post('/requests/:id/attend', requirePermission('cleaning.attend'), asyncRoute((req, res) => {
   res.json({
     request: attendRequest({ id: int(req.params.id), user: req.user, req, note: req.body?.note ?? null }),
     summary: pendingSummary(),
   });
 }));
 
-router.post('/requests/:id/cancel', requirePermission('cleaning.request'), asyncRoute((req, res) => {
+// Cancelar no lleva `requirePermission`: lo pueden los dos lados, y quién
+// exactamente lo decide la propia función.
+router.post('/requests/:id/cancel', asyncRoute((req, res) => {
   res.json({
     request: cancelRequest({ id: int(req.params.id), user: req.user, req, reason: req.body?.reason ?? null }),
     summary: pendingSummary(),

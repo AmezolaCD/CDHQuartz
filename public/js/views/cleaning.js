@@ -30,7 +30,7 @@ function chipPrioridad(p, n = null) {
     ${icon(p.icon, 12)}${esc(p.name)}${n === null ? '' : ` ${n}`}</span>`;
 }
 
-function filaSolicitud(s, puede) {
+function filaSolicitud(s, permisos) {
   return `<div class="solic" style="--pr:${esc(s.priority_color ?? '#64748b')}">
     <button class="solic-room" data-room="${s.room_id}">
       <span class="num">${esc(s.room_number)}</span>
@@ -53,9 +53,9 @@ function filaSolicitud(s, puede) {
         ${s.closed_reason ? ` · ${esc(s.closed_reason)}` : ''}
       </div>
     </div>
-    ${s.status === 'pendiente' && puede ? `<div class="row" style="gap:6px">
-      <button class="btn sm" data-atender="${s.id}">${icon('check', 14)} Atendida</button>
-      <button class="btn sm ghost" data-cancelar="${s.id}">${icon('x', 14)} Cancelar</button>
+    ${s.status === 'pendiente' ? `<div class="row" style="gap:6px">
+      ${permisos.atender ? `<button class="btn sm" data-atender="${s.id}">${icon('check', 14)} Atendida</button>` : ''}
+      ${permisos.cancelar ? `<button class="btn sm ghost" data-cancelar="${s.id}">${icon('x', 14)} Cancelar</button>` : ''}
     </div>` : ''}
   </div>`;
 }
@@ -82,9 +82,10 @@ export async function cleaningView(outlet) {
   const pintar = async () => {
     const data = await api.get('/api/cleaning', filtros);
     const puede = data.canRequest;
+    const permisos = { atender: data.canAttend, cancelar: data.canCancel };
 
     $('[data-cola]', outlet).innerHTML = data.pending.length
-      ? data.pending.map((s) => filaSolicitud(s, puede)).join('')
+      ? data.pending.map((s) => filaSolicitud(s, permisos)).join('')
       : emptyState('No hay limpiezas pendientes de atender.', 'check-circle');
 
     $('[data-listas]', outlet).innerHTML = data.ready.length
@@ -93,7 +94,7 @@ export async function cleaningView(outlet) {
 
 
     $('[data-resueltas]', outlet).innerHTML = data.resolved.length
-      ? data.resolved.map((s) => filaSolicitud(s, false)).join('')
+      ? data.resolved.map((s) => filaSolicitud(s, {})).join('')
       : emptyState('Todavía no hay solicitudes cerradas.', 'history');
 
     $('[data-resumen]', outlet).innerHTML = `

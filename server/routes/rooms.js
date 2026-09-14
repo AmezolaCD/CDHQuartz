@@ -215,6 +215,7 @@ router.get('/:id', asyncRoute((req, res) => {
     pmsNotice: pmsNotice(),
     canEditStatus: req.user.permissions.includes('room.status'),
     canRequestCleaning: req.user.permissions.includes('cleaning.request'),
+    canAttendCleaning: req.user.permissions.includes('cleaning.attend'),
     canCreateMovement: req.user.permissions.includes('movement.create'),
   });
 }));

@@ -18,7 +18,8 @@ export const PERMISSIONS = [
   { code: 'room.edit',        grp: 'Habitaciones', name: 'Editar detalles de habitación' },
   { code: 'room.status',      grp: 'Habitaciones', name: 'Cambiar estado de habitación' },
   { code: 'movement.create',  grp: 'Habitaciones', name: 'Crear movimientos' },
-  { code: 'cleaning.request', grp: 'Habitaciones', name: 'Solicitar limpieza de habitaciones' },
+  { code: 'cleaning.request', grp: 'Habitaciones', name: 'Solicitar limpieza a Ama de Llaves' },
+  { code: 'cleaning.attend',  grp: 'Habitaciones', name: 'Atender solicitudes de limpieza' },
   { code: 'history.view',     grp: 'Habitaciones', name: 'Ver historial' },
   { code: 'photo.upload',     grp: 'Habitaciones', name: 'Adjuntar fotografías' },
   { code: 'report.view',      grp: 'Reportes',     name: 'Ver reportes' },
@@ -32,7 +33,7 @@ export const PERMISSIONS = [
   { code: 'admin.settings',   grp: 'Administración', name: 'Administrar configuraciones' },
 ];
 
-const OPERATIVO = ['room.view','room.edit','room.status','movement.create','cleaning.request','history.view','photo.upload','report.view'];
+const OPERATIVO = ['room.view','room.edit','room.status','movement.create','history.view','photo.upload','report.view'];
 
 export const ROLES = [
   { code: 'ADMIN', name: 'Administrador', department_scope: 0, is_system: 1,
@@ -45,11 +46,11 @@ export const ROLES = [
 
   { code: 'SUPERVISOR', name: 'Supervisor', department_scope: 0, is_system: 1,
     description: 'Opera y valida todas las categorías, sin acceso a administración.',
-    permissions: [...OPERATIVO,'report.export','dashboard.manage','audit.view','notification.manage'] },
+    permissions: [...OPERATIVO,'cleaning.attend','report.export','dashboard.manage','audit.view','notification.manage'] },
 
   { code: 'AMA', name: 'Ama de Llaves', department_scope: 1, is_system: 1,
-    description: 'Gestiona los campos de Ama de Llaves.',
-    permissions: OPERATIVO },
+    description: 'Gestiona los campos de Ama de Llaves y atiende la cola de limpieza.',
+    permissions: [...OPERATIVO, 'cleaning.attend'] },
 
   { code: 'MTTO', name: 'Mantenimiento', department_scope: 1, is_system: 1,
     description: 'Gestiona los campos de Mantenimiento.',
@@ -60,7 +61,7 @@ export const ROLES = [
     permissions: OPERATIVO },
 
   { code: 'RECEPCION', name: 'Recepción', department_scope: 1, is_system: 1,
-    description: 'Consulta habitaciones y registra observaciones autorizadas.',
+    description: 'Registra entradas y salidas, reporta a otras áreas y solicita limpieza.',
     permissions: ['room.view','room.status','movement.create','cleaning.request','history.view','photo.upload','report.view'] },
 
   { code: 'OTROS', name: 'Otros', department_scope: 1, is_system: 0,
