@@ -306,6 +306,9 @@ CREATE TABLE IF NOT EXISTS movement_types (
   -- 1 = cambia algo que el PMS también lleva, así que hay que repetirlo allá
   -- mientras los dos sistemas no estén enlazados.
   warns_pms           INTEGER NOT NULL DEFAULT 0,
+  -- Grupo de la pantalla "Registrar": ordena las acciones en el orden del
+  -- trabajo. No cambia lo que la acción hace (ver ACTION_GROUPS del catálogo).
+  action_group      TEXT,
   icon              TEXT NOT NULL DEFAULT 'bolt',
   severity          TEXT NOT NULL DEFAULT 'normal', -- normal|alta|critica
   is_incident       INTEGER NOT NULL DEFAULT 0,

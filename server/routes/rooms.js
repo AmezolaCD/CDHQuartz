@@ -9,6 +9,7 @@ import {
 import { openIncidentsByRoom, recurrence, thresholds } from '../lib/stats.js';
 import { pendingByRoom, pendingRequest, pendingSummary, pmsNotice, priorities } from '../lib/cleaning.js';
 import { getSettingNumber } from '../lib/settings.js';
+import { ACTION_GROUPS } from '../db/catalog.js';
 
 const router = express.Router();
 router.use(requireAuth, requirePermission('room.view'));
@@ -317,11 +318,21 @@ router.post('/:id/movements',
     }
   }));
 
-/** Acciones rápidas disponibles para el usuario actual. */
+/**
+ * Acciones rápidas disponibles para el usuario actual, y los grupos en los que
+ * la pantalla «Registrar» las ordena.
+ *
+ * Los grupos viajan con las acciones para que la interfaz no tenga que saberse
+ * ninguna lista: pinta lo que le llega, en el orden en que le llega. Un grupo
+ * sin acciones visibles no se manda —quien no puede reportar no ve la sección
+ * de reportes— y una acción que el hotel cree desde Administración sin grupo
+ * cae en el último, «Otras acciones», en vez de desaparecer.
+ */
 router.get('/meta/quick-actions', asyncRoute((req, res) => {
   const rows = all(`
     SELECT mt.code, mt.name, mt.icon, mt.severity, mt.requires_comment, mt.requires_photo,
            mt.allows_photo, mt.is_incident, mt.is_quick_action, mt.cross_department, mt.sort_order,
+           mt.action_group,
            c.id AS category_id, c.code AS category_code, c.name AS category_name,
            c.department_id AS category_department_id,
            mt.target_from_clean, mt.asks_guest_present, mt.warns_pms,
@@ -331,19 +342,36 @@ router.get('/meta/quick-actions', asyncRoute((req, res) => {
       LEFT JOIN room_statuses s ON s.id = mt.target_status_id
      WHERE mt.active = 1 AND mt.is_system = 0
      ORDER BY mt.sort_order`);
-  res.json({
-    actions: rows
-      .filter((a) => a.cross_department || canWriteCategory(req.user, a.category_department_id))
-      .filter((a) => !(a.target_status_code || a.target_from_clean)
-        || req.user.permissions.includes('room.status'))
-      .map((a) => ({
-        ...a,
-        requiresComment: !!a.requires_comment,
-        requiresPhoto: !!a.requires_photo,
-        asksGuestPresent: !!a.asks_guest_present,
-        warnsPms: !!a.warns_pms,
-      })),
-  });
+  const actions = rows
+    .filter((a) => a.cross_department || canWriteCategory(req.user, a.category_department_id))
+    .filter((a) => !(a.target_status_code || a.target_from_clean)
+      || req.user.permissions.includes('room.status'))
+    .map((a) => ({
+      ...a,
+      requiresComment: !!a.requires_comment,
+      requiresPhoto: !!a.requires_photo,
+      asksGuestPresent: !!a.asks_guest_present,
+      warnsPms: !!a.warns_pms,
+    }));
+
+  const conocidos = new Set(ACTION_GROUPS.map((g) => g.code));
+  const grupos = [
+    ...ACTION_GROUPS,
+    { code: null, name: 'Otras acciones', icon: 'bolt', sort_order: 99 },
+  ].map((g) => ({
+    code: g.code,
+    name: g.name,
+    icon: g.icon,
+    oneEntry: !!g.one_entry,
+    entryName: g.entry_name ?? g.name,
+    entryHint: g.entry_hint ?? null,
+    pickTitle: g.pick_title ?? null,
+    actions: actions
+      .filter((a) => (g.code ? a.action_group === g.code : !conocidos.has(a.action_group)))
+      .map((a) => a.code),
+  })).filter((g) => g.actions.length);
+
+  res.json({ actions, groups: grupos });
 }));
 
 export default router;

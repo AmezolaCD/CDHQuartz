@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 
 const cargar = (rel) => import(pathToFileURL(path.resolve(rel)).href);
 
-const { one, all } = await cargar('server/lib/db.js');
+const { one, all, COLUMNAS_NUEVAS } = await cargar('server/lib/db.js');
 const { loadSettings } = await cargar('server/lib/settings.js');
 loadSettings();
 const { withPermissions, findUserByUsername } = await cargar('server/lib/auth.js');
@@ -35,20 +35,24 @@ const huerfanas = one(`
    WHERE r.active = 1 AND s.active = 0`).n;
 if (huerfanas) fallo(huerfanas + ' habitaciones quedaron en un estado retirado');
 
-// 3) Una bandera nueva sobre una acción que YA existía no llega sola: la
+// 3) Una columna nueva sobre una acción que YA existía no llega sola: la
 // puesta al día sólo inserta los tipos que faltan. La base de CI se acaba de
 // sembrar, así que nadie la ha configurado y toda diferencia con el catálogo
-// es un relleno de columna olvidado.
-const BANDERAS = ['is_incident', 'closes_incident', 'requires_comment', 'requires_photo',
-  'cross_department', 'notify', 'target_from_clean', 'asks_guest_present',
-  'closes_cleaning_request', 'warns_pms'];
+// es un relleno de columna olvidado. Se comparan TODAS las columnas tardías,
+// con relleno o sin él: quedarse con las que ya lo tienen dejaría fuera justo
+// el caso del fallo.
+const tardias = COLUMNAS_NUEVAS.filter((c) => c.table === 'movement_types');
+const porDefecto = (ddl) => {
+  const m = /DEFAULT\s+(?:'([^']*)'|(\d+))/i.exec(ddl);
+  return m ? (m[1] ?? Number(m[2])) : null;
+};
 for (const tipo of MOVEMENT_TYPES) {
   const fila = one('SELECT * FROM movement_types WHERE code = @code', { code: tipo.code });
   if (!fila) fallo('falta el tipo de movimiento ' + tipo.code);
-  for (const bandera of BANDERAS) {
-    const esperado = Number(tipo[bandera] ?? 0);
-    if (Number(fila[bandera]) !== esperado) {
-      fallo(tipo.code + '.' + bandera + ' quedó en ' + fila[bandera] +
+  for (const c of tardias) {
+    const esperado = tipo[c.column] ?? porDefecto(c.ddl);
+    if (fila[c.column] !== esperado) {
+      fallo(tipo.code + '.' + c.column + ' quedó en ' + fila[c.column] +
         ' y el catálogo dice ' + esperado + ': falta el relleno de esa columna en COLUMNAS_NUEVAS');
     }
   }

@@ -17,7 +17,7 @@ const { loadSettings } = settingsMod;
 const { withPermissions, findUserByUsername } = await import('../server/lib/auth.js');
 const { recordMovement, recordBulkMovement, getRoomByNumber, MovementError } = await import('../server/lib/movements.js');
 const stats = await import('../server/lib/stats.js');
-const { FLOOR_MAP, MOVEMENT_TYPES } = await import('../server/db/catalog.js');
+const { FLOOR_MAP, MOVEMENT_TYPES, ACTION_GROUPS } = await import('../server/db/catalog.js');
 const upgradeMod = await import('../server/db/upgrade.js');
 const { backup } = await import('../server/db/backup.js');
 const cleaning = await import('../server/lib/cleaning.js');
@@ -504,37 +504,68 @@ describe('Puesta al día del catálogo (npm run upgrade)', () => {
     db.prepare("UPDATE movement_types SET target_status_id = @s WHERE code = 'RELEASE'").run({ s: vuelta });
   });
 
-  test('una bandera publicada tarde llega a las acciones que ya existían', () => {
+  test('una columna publicada tarde llega a las acciones que ya existían', () => {
     const { upgrade } = upgradeMod;
     // El fallo que esto vigila: la puesta al día sólo INSERTA lo que falta, y
     // una acción que ya está en la base no se vuelve a insertar. Una columna
-    // de bandera añadida después nace en 0 para todas ellas, así que sin
-    // relleno la bandera no llega nunca —fue lo que dejó a "Reportar a
-    // Sistemas" sin preguntar si el huésped estaría en la habitación—.
+    // añadida después nace con su valor por defecto para todas ellas, así que
+    // sin relleno lo que el catálogo declara no llega nunca —fue lo que dejó a
+    // "Reportar a Sistemas" sin preguntar si el huésped estaría, y lo que
+    // dejaría los quince botones de "Registrar" sin agrupar—.
     //
-    // Se recrea ese momento quitando las columnas: la puesta al día las
-    // vuelve a añadir, y con ellas debe llegar lo que el catálogo declara.
-    const banderas = COLUMNAS_NUEVAS.filter(
-      (c) => c.table === 'movement_types' && c.ddl === 'INTEGER NOT NULL DEFAULT 0');
-    assert.ok(banderas.length, 'el catálogo debe tener banderas añadidas después');
+    // Se recrea ese momento quitando las columnas: la puesta al día las vuelve
+    // a añadir, y con ellas debe llegar lo que el catálogo dice.
+    // TODAS las columnas tardías de la tabla, con relleno o sin él: quedarse
+    // sólo con las que ya lo tienen dejaría fuera justo el caso del fallo.
+    const tardias = COLUMNAS_NUEVAS.filter((c) => c.table === 'movement_types');
+    assert.ok(tardias.length, 'el catálogo debe tener columnas añadidas después');
 
     // El correctivo de una sola vez ya se gastó en esta base (lo agotó la
     // primera puesta al día de esta sección), así que lo único que puede
-    // sembrar las banderas aquí es el relleno de la columna.
+    // sembrar estas columnas aquí es el relleno.
     assert.ok(one("SELECT 1 x FROM audit_log WHERE entity_id LIKE 'correctivo:%'"),
       'el correctivo debe estar ya aplicado para que esta prueba mida el relleno');
 
-    for (const c of banderas) db.exec(`ALTER TABLE movement_types DROP COLUMN ${c.column}`);
+    for (const c of tardias) db.exec(`ALTER TABLE movement_types DROP COLUMN ${c.column}`);
     upgrade({ quiet: true });
 
+    // Lo que el catálogo declara; y si no declara nada, el valor por defecto
+    // de la propia columna.
+    const porDefecto = (ddl) => {
+      const m = /DEFAULT\s+(?:'([^']*)'|(\d+))/i.exec(ddl);
+      return m ? (m[1] ?? Number(m[2])) : null;
+    };
     for (const m of MOVEMENT_TYPES) {
       const fila = one('SELECT * FROM movement_types WHERE code = @code', { code: m.code });
-      for (const c of banderas) {
-        assert.equal(fila[c.column], m[c.column] ? 1 : 0,
-          `${m.name} debe quedar con ${c.column} = ${m[c.column] ? 1 : 0}`);
+      for (const c of tardias) {
+        const esperado = m[c.column] ?? porDefecto(c.ddl);
+        assert.equal(fila[c.column], esperado, `${m.name} debe quedar con ${c.column} = ${esperado}`);
       }
     }
     assert.equal(upgrade({ quiet: true }).length, 0, 'la segunda pasada ya no cambia nada');
+  });
+
+  test('cada acción rápida cae en un grupo que existe', () => {
+    // Un grupo mal escrito no rompe nada: la acción se va a "Otras acciones" y
+    // nadie se entera. Por eso se comprueba aquí y no en la pantalla.
+    const conocidos = new Set(ACTION_GROUPS.map((g) => g.code));
+    for (const m of MOVEMENT_TYPES.filter((x) => x.is_quick_action)) {
+      assert.ok(conocidos.has(m.action_group),
+        `"${m.name}" declara el grupo ${m.action_group ?? 'ninguno'}, que no está en ACTION_GROUPS`);
+    }
+    // Y todo grupo declarado tiene al menos una acción: uno vacío es una
+    // sección que nunca se pinta.
+    for (const g of ACTION_GROUPS) {
+      assert.ok(MOVEMENT_TYPES.some((m) => m.action_group === g.code),
+        `el grupo "${g.name}" se quedó sin acciones`);
+    }
+    // Reportar es un solo gesto: todo lo que vive en el grupo de entrada única
+    // pregunta por el huésped, que es lo que el área necesita saber.
+    for (const g of ACTION_GROUPS.filter((x) => x.one_entry)) {
+      for (const m of MOVEMENT_TYPES.filter((x) => x.action_group === g.code)) {
+        assert.equal(m.asks_guest_present, 1, `"${m.name}" es un reporte y debe preguntar por el huésped`);
+      }
+    }
   });
 
   test('los correctivos reparan lo que se publicó a medias, y sólo una vez', () => {
