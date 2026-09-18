@@ -81,7 +81,7 @@ async function roomsTab(box) {
 
   const load = async () => {
     body.innerHTML = spinner();
-    const { items, gridColumns } = await api.get('/api/admin/rooms');
+    const { items, gridColumns } = await api.get('api/admin/rooms');
     const active = items.filter((r) => r.active).length;
     body.innerHTML = `<table>
       <thead><tr><th>Habitación</th><th>Piso</th><th>Tipo</th><th>Estado</th>
@@ -119,7 +119,7 @@ async function roomsTab(box) {
         submitLabel: 'Crear habitación',
       });
       if (!v) return;
-      try { await api.post('/api/admin/rooms', v); toast(`Habitación ${v.number} creada.`); await loadBootstrap(); await load(); }
+      try { await api.post('api/admin/rooms', v); toast(`Habitación ${v.number} creada.`); await loadBootstrap(); await load(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
 
@@ -143,7 +143,7 @@ async function roomsTab(box) {
         ],
       });
       if (!v) return;
-      try { await api.put(`/api/admin/rooms/${r.id}`, v); toast('Habitación actualizada.'); await loadBootstrap(); await load(); }
+      try { await api.put(`api/admin/rooms/${r.id}`, v); toast('Habitación actualizada.'); await loadBootstrap(); await load(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
   });
@@ -159,7 +159,7 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
 
   const load = async () => {
     body.innerHTML = spinner();
-    const { items } = await api.get(`/api/admin/${path}`);
+    const { items } = await api.get(`api/admin/${path}`);
     body.dataset.items = JSON.stringify(items);
     body.innerHTML = items.length ? `<table>
       <thead><tr>${columns.map((c) => `<th>${esc(c.header)}</th>`).join('')}<th>Acciones</th></tr></thead>
@@ -177,7 +177,7 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
     if (e.target.closest('[data-new]')) {
       const v = await formModal({ title: newLabel, fields: fields(), submitLabel: 'Crear' });
       if (!v) return;
-      try { await api.post(`/api/admin/${path}`, transform(v)); toast(`${entityName} creado.`); await load(); await afterChange?.(); }
+      try { await api.post(`api/admin/${path}`, transform(v)); toast(`${entityName} creado.`); await load(); await afterChange?.(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
 
@@ -186,7 +186,7 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
       const it = items().find((x) => x.id === Number(ed.dataset.edit));
       const v = await formModal({ title: `Editar ${entityName.toLowerCase()}`, fields: fields(it), values: it });
       if (!v) return;
-      try { await api.put(`/api/admin/${path}/${it.id}`, transform(v)); toast(`${entityName} actualizado.`); await load(); await afterChange?.(); }
+      try { await api.put(`api/admin/${path}/${it.id}`, transform(v)); toast(`${entityName} actualizado.`); await load(); await afterChange?.(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
 
@@ -199,7 +199,7 @@ function catalogTab(box, { path, title, subtitle, columns, fields, newLabel, ent
         confirmLabel: 'Desactivar', danger: true,
       });
       if (!ok) return;
-      try { await api.del(`/api/admin/${path}/${it.id}`); toast(`${entityName} desactivado.`); await load(); await afterChange?.(); }
+      try { await api.del(`api/admin/${path}/${it.id}`); toast(`${entityName} desactivado.`); await load(); await afterChange?.(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
   });
@@ -219,7 +219,7 @@ async function usersTab(box) {
 
   const loadUsers = async () => {
     usersBox.innerHTML = spinner();
-    const { items } = await api.get('/api/admin/users');
+    const { items } = await api.get('api/admin/users');
     usersBox.dataset.items = JSON.stringify(items);
     usersBox.innerHTML = `<table>
       <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Departamento</th>
@@ -236,7 +236,7 @@ async function usersTab(box) {
 
   const loadRoles = async () => {
     rolesBox.innerHTML = spinner();
-    rolesData = await api.get('/api/admin/roles');
+    rolesData = await api.get('api/admin/roles');
     const groups = [...new Set(rolesData.permissions.map((p) => p.grp))];
     rolesBox.innerHTML = `<table>
       <thead><tr><th>Rol</th><th>Alcance</th>${groups.map((g) => `<th>${esc(g)}</th>`).join('')}<th>Acciones</th></tr></thead>
@@ -276,7 +276,7 @@ async function usersTab(box) {
     if (e.target.closest('[data-new]')) {
       const v = await formModal({ title: 'Nuevo usuario', fields: userFields(), submitLabel: 'Crear usuario' });
       if (!v) return;
-      try { await api.post('/api/admin/users', v); toast('Usuario creado.'); await loadUsers(); await loadBootstrap(); }
+      try { await api.post('api/admin/users', v); toast('Usuario creado.'); await loadUsers(); await loadBootstrap(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
 
@@ -291,7 +291,7 @@ async function usersTab(box) {
       });
       if (!v) return;
       if (!v.password) delete v.password;
-      try { await api.put(`/api/admin/users/${u.id}`, v); toast('Usuario actualizado.'); await loadUsers(); await loadBootstrap(); }
+      try { await api.put(`api/admin/users/${u.id}`, v); toast('Usuario actualizado.'); await loadUsers(); await loadBootstrap(); }
       catch (err) { toast(err.message, 'error', 5200); }
     }
 
@@ -320,7 +320,7 @@ async function usersTab(box) {
         ev.preventDefault();
         const perms = $$('[name=perm]:checked', ev.target).map((i) => i.value);
         try {
-          await api.put(`/api/admin/roles/${role.id}/permissions`, { permissions: perms, reason: ev.target.reason.value || null });
+          await api.put(`api/admin/roles/${role.id}/permissions`, { permissions: perms, reason: ev.target.reason.value || null });
           m.close(); toast('Permisos actualizados.'); await loadRoles(); resetQuickActions();
         } catch (err) { toast(err.message, 'error', 5200); }
       });
@@ -337,7 +337,7 @@ async function settingsTab(box) {
   const body = $('[data-body]', box);
   const load = async () => {
     body.innerHTML = spinner();
-    const { items } = await api.get('/api/admin/settings');
+    const { items } = await api.get('api/admin/settings');
     const groups = [...new Set(items.map((s) => s.grp))];
     body.innerHTML = groups.map((g) => `
       <div style="padding:14px 16px;border-bottom:1px solid var(--line)">
@@ -365,7 +365,7 @@ async function settingsTab(box) {
     const key = b.dataset.save;
     const input = $(`[data-key="${CSS.escape(key)}"]`, box);
     try {
-      await api.put(`/api/admin/settings/${key}`, { value: input.value });
+      await api.put(`api/admin/settings/${key}`, { value: input.value });
       toast('Configuración guardada.');
       await loadBootstrap();
       if (key === 'timezone') toast('Los nuevos movimientos usarán la zona horaria actualizada.', 'warn', 4600);

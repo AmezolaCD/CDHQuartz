@@ -4,7 +4,10 @@ export class ApiError extends Error {
 }
 
 async function request(method, path, { body, query, raw = false } = {}) {
-  const url = new URL(path, location.origin);
+  // Se resuelve contra la base del documento y no contra el origen: con el
+  // `<base href>` que escribe el servidor, `api/…` cae bajo el prefijo cuando
+  // lo hay (`/cdh/api/…`) y en la raíz cuando no.
+  const url = new URL(path, document.baseURI);
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
   }

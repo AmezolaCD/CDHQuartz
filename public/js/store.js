@@ -17,7 +17,7 @@ export const floorById = (id) => state.floors.find((f) => f.id === Number(id)) ?
 
 export async function loadSession() {
   try {
-    const { user, hotel } = await api.get('/api/auth/me');
+    const { user, hotel } = await api.get('api/auth/me');
     state.user = user;
     state.hotel.name = hotel;
     return user;
@@ -25,7 +25,7 @@ export async function loadSession() {
 }
 
 export async function loadBootstrap() {
-  const data = await api.get('/api/bootstrap');
+  const data = await api.get('api/bootstrap');
   Object.assign(state, {
     hotel: data.hotel,
     floors: data.floors,
@@ -41,7 +41,7 @@ export async function loadBootstrap() {
 }
 
 export async function refreshNotifications() {
-  try { state.notifications = await api.get('/api/notifications'); }
+  try { state.notifications = await api.get('api/notifications'); }
   catch { /* sin notificaciones disponibles */ }
   return state.notifications;
 }

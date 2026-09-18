@@ -93,7 +93,7 @@ function wireSearch(shell) {
 
   const run = debounce(async (q) => {
     if (!q.trim()) return close();
-    const data = await api.get('/api/rooms/search', { q });
+    const data = await api.get('api/rooms/search', { q });
     items = [];
     let html = '';
 
@@ -183,7 +183,7 @@ async function notificationsPanel() {
   d.body.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-notif-id]');
     if (!b) return;
-    await api.post(`/api/notifications/${b.dataset.notifId}/read`).catch(() => {});
+    await api.post(`api/notifications/${b.dataset.notifId}/read`).catch(() => {});
     if (b.dataset.room) { d.close(); openRoom(Number(b.dataset.room), { onChange: render }); }
   });
   await load();
@@ -223,7 +223,7 @@ function accountPanel() {
   });
   $('[data-pw]', d.panel).addEventListener('click', () => { d.close(); passwordPrompt(false); });
   $('[data-logout]', d.panel).addEventListener('click', async () => {
-    await api.post('/api/auth/logout').catch(() => {});
+    await api.post('api/auth/logout').catch(() => {});
     location.hash = '';
     location.reload();
   });

@@ -48,7 +48,9 @@ router.post('/login', asyncRoute((req, res) => {
     action: 'login', actor: user, after: { rol: user.role_name }, req });
 
   res.cookie(COOKIE_NAME, token, {
-    httpOnly: true, sameSite: 'lax', path: '/',
+    // El `Path` sigue al prefijo: en `core-quartz.vercel.app` conviven tres
+    // aplicaciones en el mismo dominio y ninguna debe recibir la cookie de otra.
+    httpOnly: true, sameSite: 'lax', path: req.app.locals.basePath || '/',
     secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
     expires: expiresAt,
   });
@@ -61,7 +63,7 @@ router.post('/logout', asyncRoute((req, res) => {
       action: 'logout', actor: req.user, req });
   }
   revokeSession(req.sessionToken);
-  res.clearCookie(COOKIE_NAME, { path: '/' });
+  res.clearCookie(COOKIE_NAME, { path: req.app.locals.basePath || '/' });
   res.json({ ok: true });
 }));
 

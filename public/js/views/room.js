@@ -8,7 +8,7 @@ import { state, can } from '../store.js';
 
 let quickActionsCache = null;
 async function quickActions() {
-  if (!quickActionsCache) quickActionsCache = await api.get('/api/rooms/meta/quick-actions');
+  if (!quickActionsCache) quickActionsCache = await api.get('api/rooms/meta/quick-actions');
   return quickActionsCache;
 }
 export const resetQuickActions = () => { quickActionsCache = null; };
@@ -31,7 +31,7 @@ export async function openRoom(roomId, { onChange = null, tab = 'detalle' } = {}
   openRoomDrawer = { close: d.close, get dirty() { return dirty; } };
 
   const load = async (activeTab = tab) => {
-    const data = await api.get(`/api/rooms/${roomId}`);
+    const data = await api.get(`api/rooms/${roomId}`);
     const r = data.room;
     $('h2', d.panel).innerHTML = `Habitación ${esc(r.number)}`;
     $('.drawer-head p', d.panel).innerHTML =
@@ -221,7 +221,7 @@ function editField(room, cat, field, reload) {
     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
     const fd = new FormData(e.target);
     try {
-      await api.post(`/api/rooms/${room.id}/movements`, {
+      await api.post(`api/rooms/${room.id}/movements`, {
         details: [{ fieldCode: field.code, value: fd.get('value') }],
         comment: fd.get('comment') || null,
       });
@@ -312,7 +312,7 @@ async function actionPanel(panel, data, reload) {
       const etiqueta = btn.textContent.trim();
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
       try {
-        const r = await api.post('/api/cleaning/requests', {
+        const r = await api.post('api/cleaning/requests', {
           roomId: room.id, priority: fd.get('priority'), note: fd.get('note') || null,
         });
         toast(r.creadas.length ? `Limpieza solicitada para la habitación ${room.number}.`
@@ -349,7 +349,7 @@ async function actionPanel(panel, data, reload) {
       const btn = $('[type=submit]', e.target);
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
       try {
-        await api.post(`/api/rooms/${room.id}/movements`, { status: fd.get('status'), comment: fd.get('comment') || null });
+        await api.post(`api/rooms/${room.id}/movements`, { status: fd.get('status'), comment: fd.get('comment') || null });
         toast(`Estado actualizado en la habitación ${room.number}.`);
         await reload('detalle');
       } catch (err) {
@@ -473,7 +473,7 @@ function actionForm(room, action, reload, avisoPms = null) {
     if (files.length) body.append('photoKinds', JSON.stringify(kinds));
 
     try {
-      const res = await fetch(`/api/rooms/${room.id}/movements`, { method: 'POST', body, credentials: 'same-origin' });
+      const res = await fetch(`api/rooms/${room.id}/movements`, { method: 'POST', body, credentials: 'same-origin' });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error ?? 'No fue posible guardar.');
       m.close();
@@ -510,7 +510,7 @@ async function historyPanel(panel, room) {
 
   const load = async () => {
     listBox.innerHTML = spinner();
-    const data = await api.get(`/api/rooms/${room.id}/history`, { ...filters, limit: 100 });
+    const data = await api.get(`api/rooms/${room.id}/history`, { ...filters, limit: 100 });
     if (!data.items.length) { listBox.innerHTML = emptyState('Sin movimientos para los filtros seleccionados.', 'history'); return; }
     listBox.innerHTML = `<p class="small muted" style="margin:0 0 10px">${data.total} movimiento${data.total === 1 ? '' : 's'}</p>
       <div class="timeline">${data.items.map(timelineItem).join('')}</div>`;

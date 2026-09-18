@@ -80,7 +80,7 @@ export async function cleaningView(outlet) {
   const filtros = { floorId: '', priority: '' };
 
   const pintar = async () => {
-    const data = await api.get('/api/cleaning', filtros);
+    const data = await api.get('api/cleaning', filtros);
     const puede = data.canRequest;
     const permisos = { atender: data.canAttend, cancelar: data.canCancel };
 
@@ -108,7 +108,7 @@ export async function cleaningView(outlet) {
     return data;
   };
 
-  const inicial = await api.get('/api/cleaning');
+  const inicial = await api.get('api/cleaning');
   const puede = inicial.canRequest;
 
   outlet.innerHTML = `
@@ -197,11 +197,11 @@ export async function cleaningView(outlet) {
       try {
         let ids = roomIds;
         if (!ids.length) {
-          const buscada = await api.get('/api/rooms/search', { q: String(fd.get('numero')).trim() });
+          const buscada = await api.get('api/rooms/search', { q: String(fd.get('numero')).trim() });
           if (!buscada.exact) throw new Error(`No existe la habitación ${fd.get('numero')}.`);
           ids = [buscada.exact.id];
         }
-        const r = await api.post('/api/cleaning/requests', {
+        const r = await api.post('api/cleaning/requests', {
           roomIds: ids, priority: fd.get('priority'), note: fd.get('note') || null,
         });
         m.close();
@@ -243,7 +243,7 @@ export async function cleaningView(outlet) {
       const btn = $('[type=submit]', m.footer);
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
       try {
-        await api.post(`/api/cleaning/requests/${id}/${esCancelar ? 'cancel' : 'attend'}`,
+        await api.post(`api/cleaning/requests/${id}/${esCancelar ? 'cancel' : 'attend'}`,
           esCancelar ? { reason: texto } : { note: texto || null });
         m.close();
         toast(esCancelar ? 'Solicitud cancelada.' : 'Solicitud marcada como atendida.');
@@ -279,7 +279,7 @@ export async function cleaningView(outlet) {
       const btn = $('[type=submit]', m.footer);
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Guardando…';
       try {
-        await api.post(`/api/rooms/${roomId}/movements`, { movementType: 'DELIVER', comment: comment || null });
+        await api.post(`api/rooms/${roomId}/movements`, { movementType: 'DELIVER', comment: comment || null });
         m.close();
         toast(`Habitación ${numero} entregada. ${inicial.pmsNotice ?? ''}`.trim(), 'warn', 7000);
         await pintar();

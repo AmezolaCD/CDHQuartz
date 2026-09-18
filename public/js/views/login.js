@@ -25,7 +25,7 @@ export function loginView(onSuccess) {
 
   // El logo se consulta antes de iniciar sesión: la pantalla de acceso es lo
   // primero que ve el personal y debe llevar la marca del hotel.
-  fetch('/api/bootstrap/logo').then((r) => r.json()).then(({ logo, hotel }) => {
+  fetch('api/bootstrap/logo').then((r) => r.json()).then(({ logo, hotel }) => {
     $('[data-marca]', node).innerHTML = logo
       ? `<img class="login-logo" src="${esc(logo)}" alt="${esc(hotel)}">`
       : `<div class="logo">CDH</div>`;
@@ -39,7 +39,7 @@ export function loginView(onSuccess) {
     errBox.hidden = true;
     try {
       const fd = new FormData(e.target);
-      const { user } = await api.post('/api/auth/login', {
+      const { user } = await api.post('api/auth/login', {
         username: fd.get('username'), password: fd.get('password'),
       });
       await onSuccess(user);
@@ -86,7 +86,7 @@ export function passwordPrompt(force = false) {
       const btn = $('[type=submit]', node);
       btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
       try {
-        await api.post('/api/auth/password', {
+        await api.post('api/auth/password', {
           currentPassword: fd.get('currentPassword'), newPassword: fd.get('newPassword'),
         });
         node.remove(); toast('Contraseña actualizada.'); resolve(true);

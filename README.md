@@ -99,6 +99,70 @@ acceso). Se puede fijar otra con `CDH_SEED_PASSWORD` antes de sembrar.
 | `CDH_DB_FILE` | `./data/cdh.sqlite` | Ruta del archivo SQLite |
 | `CDH_TZ` | `America/Tijuana` | Zona horaria inicial (después se administra desde la app) |
 | `CDH_SEED_PASSWORD` | `Quartz#2026` | Contraseña de los usuarios iniciales |
+| `CDH_BASE_PATH` | *(vacío)* | Prefijo de ruta; vacío = el CDH vive en la raíz, como siempre |
+| `CQ_URL_INTERNA` | *(vacío)* | Dirección interna del shell de Core Quartz |
+| `CQ_SSO_SECRETO` | *(vacío)* | Secreto compartido con ese shell |
+
+---
+
+## Entrada desde Core Quartz
+
+Core Quartz es el portal del hotel: una sola contraseña para entrar al CRM de
+Ventas y al CDH, y un solo lugar donde dar de alta y de baja al personal. Esta
+sección describe **cómo se conecta el CDH**; el CDH sigue teniendo su propio
+inicio de sesión y funciona igual sin nada de esto.
+
+> Las tres variables son opcionales y van juntas. **Sin ellas el CDH es
+> exactamente el de siempre**: en la raíz, con su login y sin ninguna ruta
+> adicional. Es lo que garantiza la suite de pruebas.
+
+### Cómo se entra
+
+El portal emite un código aleatorio válido **60 segundos y un solo uso**, y
+manda el navegador a `<prefijo>/api/auth/sso?codigo=…`. El CDH no se fía de ese
+código: lo canjea contra el portal por la **red interna**, con el secreto
+compartido. Sólo si el portal lo aprueba —y si ese usuario existe aquí y está
+activo— el CDH crea **su propia sesión** con `createSession()`, la misma que
+usa el login de siempre.
+
+Nunca se comparten sesiones ni tokens entre aplicaciones: cada una termina con
+la suya. El código no queda en la barra de direcciones.
+
+Si el portal rechaza el canje, si el usuario no existe aquí, si está inactivo o
+si el portal no responde, **no se crea ninguna sesión** y se muestra una página
+de error en español. Todo queda en la bitácora de auditoría como `sso_login` o
+`sso_rechazo`.
+
+### Las otras dos rutas
+
+Son para el portal, no para el navegador, y exigen el secreto en la cabecera
+`X-CQ-Secreto`. **Sin el secreto responden 404**, no 401: para quien no es el
+portal, esas rutas no existen.
+
+| Ruta | Para qué |
+|---|---|
+| `GET <prefijo>/api/auth/sso/usuario/:username` | El portal comprueba, al asignar el acceso, que ese usuario exista aquí y esté activo |
+| `POST <prefijo>/api/auth/sso/revocar` | Al dar de baja a alguien en el portal, se cierran aquí todas sus sesiones |
+
+### Servirlo bajo `/cdh`
+
+Con `CDH_BASE_PATH=/cdh` toda la aplicación —API, estáticos, fotografías y el
+enrutador de la interfaz— se monta bajo ese prefijo, y `GET /cdh` redirige a
+`/cdh/`. La cookie `cdh_session` usa el prefijo como `Path`, de modo que en un
+dominio compartido ninguna otra aplicación la recibe.
+
+La interfaz usa rutas relativas y el servidor escribe `<base href="<prefijo>/">`
+al servir `index.html`, así que no hay ninguna dirección fija que actualizar.
+
+```bash
+# En .env
+CDH_BASE_PATH=/cdh
+CQ_URL_INTERNA=http://core-quartz:4000
+CQ_SSO_SECRETO=...        # el mismo que tenga configurado el portal
+```
+
+Conviene comprobar después que `<prefijo>/api/health` responde y que la ruta
+sin prefijo ya no existe.
 
 ---
 

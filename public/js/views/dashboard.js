@@ -84,7 +84,7 @@ export function floorBar(floors, selectedId, onSelect) {
 /** Mapa del piso respetando la distribución real del rack. */
 export async function renderFloorMap(container, floorId, onRoomChange) {
   container.innerHTML = spinner();
-  const data = await api.get(`/api/rooms/floors/${floorId}/map`);
+  const data = await api.get(`api/rooms/floors/${floorId}/map`);
   const cells = data.cells.map((c) => (c ? roomCard(c) : '<div class="rack-empty"></div>')).join('');
   bulkPiso(floorId);
   const enBloque = bulkPuedeUsarse() && bulkActivo();
@@ -170,7 +170,7 @@ export function attentionRow(item) {
 
 // ================================================================= Vista
 export async function dashboardView(outlet) {
-  const data = await api.get('/api/dashboard');
+  const data = await api.get('api/dashboard');
   const o = data.overview;
 
   outlet.innerHTML = `
@@ -225,7 +225,7 @@ export async function dashboardView(outlet) {
 
   const mapBox = $('[data-map]', outlet);
   const refresh = async () => {
-    const fresh = await api.get('/api/dashboard');
+    const fresh = await api.get('api/dashboard');
     $('[data-kpis]', outlet).innerHTML = kpis(fresh.overview);
     const cuenta = $('[data-attention-count]', outlet);
     cuenta.textContent = fresh.attention.total;

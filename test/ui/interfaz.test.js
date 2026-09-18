@@ -584,3 +584,72 @@ describe('Recorrido de operación', () => {
     await page.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fase 05 de Core Quartz: el mismo recorrido, pero servido bajo un prefijo.
+//
+// Se añade aparte y con su propio servidor para no tocar ninguna prueba
+// existente: las de arriba siguen probando el CDH sin prefijo, que es como
+// seguirá funcionando mientras nadie configure la variable.
+// ---------------------------------------------------------------------------
+describe('Servido bajo CDH_BASE_PATH=/cdh', () => {
+  const PREFIJO = '/cdh';
+  const TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-ui-prefijo-'));
+  let servidor2; let base2;
+
+  before(async () => {
+    const puerto = await puertoLibre();
+    base2 = `http://127.0.0.1:${puerto}${PREFIJO}`;
+    servidor2 = spawn(process.execPath, ['server/index.js'], {
+      cwd: RAIZ,
+      stdio: 'ignore',
+      env: { ...process.env, PORT: String(puerto), CDH_DATA_DIR: TMP2, CDH_SEED_PASSWORD: CLAVE, CDH_BASE_PATH: PREFIJO },
+    });
+    await esperarSalud(base2);
+  });
+
+  after(() => {
+    servidor2?.kill();
+    fs.rmSync(TMP2, { recursive: true, force: true });
+  });
+
+  test('el recorrido funciona sin errores de consola ni peticiones 404', async () => {
+    const page = await navegador.newPage({ viewport: { width: 1440, height: 940 } });
+    const errores = [];
+    const noEncontradas = [];
+    page.on('pageerror', (e) => errores.push(e.message));
+    page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('401')) errores.push(m.text()); });
+    page.on('response', (r) => { if (r.status() === 404) noEncontradas.push(r.url()); });
+
+    await page.goto(`${base2}/`, { waitUntil: 'networkidle' });
+    await page.fill('#u', 'sistemas');
+    await page.fill('#p', CLAVE);
+    await page.click('#loginForm [type=submit]');
+    await page.waitForSelector('.appbar');
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => document.querySelector('.modal-wrap')?.remove());
+
+    for (const vista of ['inicio', 'pisos', 'limpieza', 'actividad', 'reportes', 'admin']) {
+      await page.evaluate((v) => { location.hash = `#/${v}`; }, vista);
+      await page.waitForTimeout(900);
+      assert.equal(await page.locator('.alert.error').count(), 0, `la vista ${vista} falló bajo el prefijo`);
+    }
+
+    assert.deepEqual(errores, [], 'la consola no debe registrar errores');
+    assert.deepEqual(noEncontradas, [], 'ninguna petición debe terminar en 404');
+    await page.close();
+  });
+
+  test('la página declara la base del prefijo y la cookie no sale de ahí', async () => {
+    const r = await fetch(`${base2}/`);
+    assert.match(await r.text(), /<base href="\/cdh\/">/);
+
+    const entrada = await fetch(`${base2}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sistemas', password: CLAVE }),
+    });
+    assert.equal(entrada.status, 200);
+    assert.match(entrada.headers.getSetCookie().join('; '), /Path=\/cdh/);
+  });
+});
