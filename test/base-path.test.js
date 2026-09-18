@@ -77,9 +77,26 @@ async function arrancar(prefijo = '') {
         bd.close();
       }
     },
-    parar() {
-      proceso.kill();
-      fs.rmSync(datos, { recursive: true, force: true });
+    /**
+     * Apaga el servidor y limpia lo suyo.
+     *
+     * Espera a que el hijo **termine de verdad** antes de borrar la carpeta:
+     * `kill()` sólo manda la señal, y en Windows el proceso sigue con el
+     * SQLite abierto un instante más, así que el borrado fallaba con EBUSY,
+     * el gancho `after` se caía y la corrida quedaba colgada con procesos
+     * huérfanos hasta agotar el tiempo del trabajo.
+     */
+    async parar() {
+      if (proceso.exitCode === null && proceso.signalCode === null) {
+        await new Promise((listo) => {
+          const rendirse = setTimeout(() => { try { proceso.kill('SIGKILL'); } catch { /* ya murió */ } listo(); }, 5_000);
+          proceso.once('exit', () => { clearTimeout(rendirse); listo(); });
+          proceso.kill();
+        });
+      }
+      // Y aun así el borrado no puede tumbar la prueba: es una carpeta
+      // temporal del sistema y el sistema operativo acabará con ella.
+      try { fs.rmSync(datos, { recursive: true, force: true }); } catch { /* el archivo puede seguir tomado */ }
     },
   };
 }
@@ -98,7 +115,7 @@ async function cookieDeEntrada(servidor) {
 describe('Sin CDH_BASE_PATH el CDH es el de hoy', () => {
   let cdh;
   before(async () => { cdh = await arrancar(''); });
-  after(() => cdh?.parar());
+  after(async () => { await cdh?.parar(); });
 
   test('/api/health responde en la raíz', async () => {
     const r = await fetch(`${cdh.base}/api/health`);
@@ -134,7 +151,7 @@ describe('Sin CDH_BASE_PATH el CDH es el de hoy', () => {
 describe('Con CDH_BASE_PATH=/cdh todo vive bajo el prefijo', () => {
   let cdh;
   before(async () => { cdh = await arrancar('/cdh'); });
-  after(() => cdh?.parar());
+  after(async () => { await cdh?.parar(); });
 
   test('/cdh/api/health responde y /api/health ya no existe', async () => {
     const conPrefijo = await fetch(`${cdh.base}/cdh/api/health`);

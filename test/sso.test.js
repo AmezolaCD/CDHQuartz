@@ -133,9 +133,26 @@ async function arrancarCdh({ interna, secreto } = {}) {
       try { bd.prepare('UPDATE users SET must_change_password = 1 WHERE lower(username) = lower(@u)').run({ u: username }); }
       finally { bd.close(); }
     },
-    parar() {
-      proceso.kill();
-      fs.rmSync(datos, { recursive: true, force: true });
+    /**
+     * Apaga el servidor y limpia lo suyo.
+     *
+     * Espera a que el hijo **termine de verdad** antes de borrar la carpeta:
+     * `kill()` sólo manda la señal, y en Windows el proceso sigue con el
+     * SQLite abierto un instante más, así que el borrado fallaba con EBUSY,
+     * el gancho `after` se caía y la corrida quedaba colgada con procesos
+     * huérfanos hasta agotar el tiempo del trabajo.
+     */
+    async parar() {
+      if (proceso.exitCode === null && proceso.signalCode === null) {
+        await new Promise((listo) => {
+          const rendirse = setTimeout(() => { try { proceso.kill('SIGKILL'); } catch { /* ya murió */ } listo(); }, 5_000);
+          proceso.once('exit', () => { clearTimeout(rendirse); listo(); });
+          proceso.kill();
+        });
+      }
+      // Y aun así el borrado no puede tumbar la prueba: es una carpeta
+      // temporal del sistema y el sistema operativo acabará con ella.
+      try { fs.rmSync(datos, { recursive: true, force: true }); } catch { /* el archivo puede seguir tomado */ }
     },
   };
 }
@@ -148,7 +165,7 @@ describe('Canje válido', () => {
     shell = await levantarShell();
     cdh = await arrancarCdh({ interna: shell.url, secreto: SECRETO });
   });
-  after(async () => { cdh?.parar(); await shell?.cerrar(); });
+  after(async () => { await cdh?.parar(); await shell?.cerrar(); });
 
   test('crea la sesión del CDH y redirige al prefijo', async () => {
     const r = await canjear(cdh, 'codigo-bueno');
@@ -199,7 +216,7 @@ describe('Canjes que el shell rechaza', () => {
     shell = await levantarShell();
     cdh = await arrancarCdh({ interna: shell.url, secreto: SECRETO });
   });
-  after(async () => { cdh?.parar(); await shell?.cerrar(); });
+  after(async () => { await cdh?.parar(); await shell?.cerrar(); });
 
   for (const [estado, motivo] of [[410, 'usado'], [410, 'vencido'], [403, 'inactivo'], [409, 'modulo']]) {
     test(`${estado} ${motivo}: página de error, sin sesión`, async () => {
@@ -239,7 +256,7 @@ describe('El shell no responde', () => {
     shell = await levantarShell();
     cdh = await arrancarCdh({ interna: shell.url, secreto: SECRETO });
   });
-  after(async () => { cdh?.parar(); await shell?.cerrar(); });
+  after(async () => { await cdh?.parar(); await shell?.cerrar(); });
 
   test('se rinde en menos de 5 s con una página en español y sin sesión', async () => {
     shell.estado.lento = true;
@@ -259,7 +276,7 @@ describe('Rutas internas para el shell', () => {
     shell = await levantarShell();
     cdh = await arrancarCdh({ interna: shell.url, secreto: SECRETO });
   });
-  after(async () => { cdh?.parar(); await shell?.cerrar(); });
+  after(async () => { await cdh?.parar(); await shell?.cerrar(); });
 
   test('consultar un usuario con el secreto devuelve existe y activo', async () => {
     const r = await fetch(cdh.url('/api/auth/sso/usuario/amadellaves'), {
@@ -311,7 +328,7 @@ describe('Rutas internas para el shell', () => {
 describe('Sin las variables configuradas, la entrada única no existe', () => {
   let cdh;
   before(async () => { cdh = await arrancarCdh({}); });
-  after(() => cdh?.parar());
+  after(async () => { await cdh?.parar(); });
 
   test('las tres rutas responden 404', async () => {
     assert.equal((await fetch(cdh.url('/api/auth/sso?codigo=x'))).status, 404);
@@ -335,7 +352,7 @@ describe('Invariante 1 · el shell no escribe en la base del CDH', () => {
     shell = await levantarShell();
     cdh = await arrancarCdh({ interna: shell.url, secreto: SECRETO });
   });
-  after(async () => { cdh?.parar(); await shell?.cerrar(); });
+  after(async () => { await cdh?.parar(); await shell?.cerrar(); });
 
   test('ni un solo movimiento tras entrar, rechazar y revocar', async () => {
     const antes = cdh.movimientos();
