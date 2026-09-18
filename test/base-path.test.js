@@ -13,7 +13,7 @@
 // ============================================================================
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -195,17 +195,23 @@ describe('Con CDH_BASE_PATH=/cdh todo vive bajo el prefijo', () => {
 
 describe('La interfaz no lleva rutas absolutas', () => {
   test('no queda ninguna ruta /api, /css, /js ni /assets en public', () => {
-    // Mismo criterio que pide la fase. `grep` devuelve 1 cuando no encuentra
-    // nada, que es justo el resultado bueno.
-    let salida = '';
-    try {
-      salida = execFileSync('grep', ['-rnE', `['"\`]/(api|css|js|assets)/`, 'public'], {
-        cwd: RAIZ, encoding: 'utf8',
-      });
-    } catch (error) {
-      if (error.status === 1) return; // sin resultados: correcto
-      throw error;
-    }
-    assert.fail(`quedan rutas absolutas en public:\n${salida}`);
+    // El mismo criterio que pide la fase, pero recorrido en Node y no con
+    // `grep`: estas pruebas también corren en Windows, donde `grep` no existe.
+    const patron = /['"`]\/(api|css|js|assets)\//;
+    const hallazgos = [];
+
+    const recorrer = (dir) => {
+      for (const entrada of fs.readdirSync(dir, { withFileTypes: true })) {
+        const completa = path.join(dir, entrada.name);
+        if (entrada.isDirectory()) { recorrer(completa); continue; }
+        if (!/\.(js|html)$/i.test(entrada.name)) continue;
+        fs.readFileSync(completa, 'utf8').split('\n').forEach((linea, n) => {
+          if (patron.test(linea)) hallazgos.push(`${completa}:${n + 1}: ${linea.trim()}`);
+        });
+      }
+    };
+    recorrer(path.join(RAIZ, 'public'));
+
+    assert.deepEqual(hallazgos, [], `quedan rutas absolutas en public:\n${hallazgos.join('\n')}`);
   });
 });
