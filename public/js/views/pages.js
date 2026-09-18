@@ -35,7 +35,7 @@ export async function floorsView(outlet, route) {
   const load = async (id) => {
     state.selectedFloorId = id;
     history.replaceState(null, '', `#/pisos/${id}`);
-    const [dash] = await Promise.all([api.get(`/api/dashboard/floor/${id}`)]);
+    const [dash] = await Promise.all([api.get(`api/dashboard/floor/${id}`)]);
     const s = dash.summary ?? {};
     $('[data-summary]', outlet).innerHTML = `
       <div class="kpis" style="margin:0">
@@ -53,7 +53,7 @@ export async function floorsView(outlet, route) {
     await renderFloorMap($('[data-map]', outlet), id, () => load(id));
   };
 
-  const floors = (await api.get('/api/dashboard')).floors;
+  const floors = (await api.get('api/dashboard')).floors;
   const bar = floorBar(floors, floorId, (id) => {
     $$('[data-floor]', bar).forEach((b) => b.setAttribute('aria-current', String(Number(b.dataset.floor) === id)));
     load(id);
@@ -72,7 +72,7 @@ export async function attentionView(outlet) {
     <div class="card"><div class="card-body flush"><div class="list" data-list>${spinner()}</div></div></div>`;
 
   const load = async () => {
-    const data = await api.get('/api/dashboard/attention', { limit: 200 });
+    const data = await api.get('api/dashboard/attention', { limit: 200 });
     $('[data-list]', outlet).innerHTML = data.items.length
       ? data.items.map(attentionRow).join('')
       : emptyState('Ninguna habitación requiere atención en este momento.', 'check-circle');
@@ -111,7 +111,7 @@ export async function activityView(outlet) {
   const list = $('[data-list]', outlet);
   const load = async (append = false) => {
     if (!append) { offset = 0; list.innerHTML = spinner(); }
-    const data = await api.get('/api/dashboard/activity', { ...filters, limit: 50, offset });
+    const data = await api.get('api/dashboard/activity', { ...filters, limit: 50, offset });
     const html = data.items.map(activityRow).join('');
     if (append) list.insertAdjacentHTML('beforeend', html);
     else list.innerHTML = html || emptyState('Sin movimientos para los filtros seleccionados.', 'history');
@@ -141,7 +141,7 @@ export async function managementView(outlet) {
     <div data-content>${spinner()}</div>`;
 
   const load = async (period) => {
-    const d = await api.get('/api/dashboard/gerencial', { period });
+    const d = await api.get('api/dashboard/gerencial', { period });
     const o = d.overview;
     const maxTrend = Math.max(1, ...d.trend.map((t) => t.movimientos));
 
@@ -275,8 +275,8 @@ export async function reportsView(outlet) {
 
   const load = async () => {
     const [rep, sum] = await Promise.all([
-      api.get('/api/reports/movements', { ...filters, limit: 300 }),
-      api.get('/api/reports/summary', filters),
+      api.get('api/reports/movements', { ...filters, limit: 300 }),
+      api.get('api/reports/summary', filters),
     ]);
     $('[data-count]', outlet).textContent =
       `${rep.total} movimientos · ${rep.incidents} incidencias · ${fmtDate(rep.range.from)} a ${fmtDate(rep.range.to)}`;
@@ -313,7 +313,7 @@ export async function reportsView(outlet) {
     const original = b.innerHTML;
     b.disabled = true; b.innerHTML = '<span class="spinner dark"></span>';
     try {
-      const name = await download('/api/reports/export', { ...filters, format: fmt }, `CDH_reporte.${fmt}`);
+      const name = await download('api/reports/export', { ...filters, format: fmt }, `CDH_reporte.${fmt}`);
       toast(`Reporte descargado: ${name}`);
     } catch (err) { toast(err.message, 'error'); }
     b.disabled = false; b.innerHTML = original;
@@ -336,7 +336,7 @@ export async function auditView(outlet) {
       <div class="card-body center" data-more hidden><button class="btn" data-load-more>Cargar más</button></div>
     </div>`;
 
-  const first = await api.get('/api/audit', { limit: 60 });
+  const first = await api.get('api/audit', { limit: 60 });
   $('[data-filters]', outlet).innerHTML = `
     <div class="field"><label>Entidad</label><select data-f="entityType"><option value="">Todas</option>
       ${first.entityTypes.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select></div>
@@ -370,7 +370,7 @@ export async function auditView(outlet) {
   const table = $('[data-table]', outlet);
   const load = async (append = false) => {
     if (!append) { offset = 0; table.innerHTML = spinner(); }
-    const data = await api.get('/api/audit', { ...filters, limit: 60, offset });
+    const data = await api.get('api/audit', { ...filters, limit: 60, offset });
     const html = rows(data.items);
     if (append) $('tbody', table)?.insertAdjacentHTML('beforeend', html);
     else {

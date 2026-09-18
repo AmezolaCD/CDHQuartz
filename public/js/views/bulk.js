@@ -29,7 +29,7 @@ export function bulkPiso(floorId) {
 
 let cacheAcciones = null;
 async function acciones() {
-  if (!cacheAcciones) cacheAcciones = await api.get('/api/rooms/meta/quick-actions');
+  if (!cacheAcciones) cacheAcciones = await api.get('api/rooms/meta/quick-actions');
   // Una fotografía es evidencia de UNA habitación concreta, y si el huésped
   // estará dentro se responde habitación por habitación: ninguna de las dos
   // cosas se replica en un lote, así que esas acciones quedan fuera.
@@ -163,7 +163,7 @@ export async function montarBarraBloque(caja, rack, rooms, onDone) {
     aplicar.disabled = true;
     aplicar.innerHTML = '<span class="spinner"></span> Aplicando…';
     try {
-      const r = await api.post('/api/rooms/bulk/movements', cuerpo);
+      const r = await api.post('api/rooms/bulk/movements', cuerpo);
       // El plural de «habitación» pierde el acento: habitaciones, no habitaciónes.
       const n = r.aplicadas.length;
       const omit = r.omitidas.length ? ` · ${r.omitidas.length} omitida${r.omitidas.length === 1 ? '' : 's'}` : '';

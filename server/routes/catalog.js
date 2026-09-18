@@ -18,7 +18,8 @@ function logoUrl() {
     const archivo = path.join(dir, `logo.${ext}`);
     if (fs.existsSync(archivo)) {
       // La marca de tiempo evita servir una versión cacheada tras sustituirlo.
-      return `/assets/logo.${ext}?v=${Math.trunc(fs.statSync(archivo).mtimeMs)}`;
+      // Relativa, como el resto de la interfaz: bajo un prefijo la absoluta daba 404.
+      return `assets/logo.${ext}?v=${Math.trunc(fs.statSync(archivo).mtimeMs)}`;
     }
   }
   return null;

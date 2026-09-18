@@ -25,13 +25,20 @@ services:
       # Contraseña de los usuarios iniciales. Sólo se usa en el primer
       # arranque, cuando se siembran las 155 habitaciones y los 7 usuarios.
       CDH_SEED_PASSWORD: "${CDH_SEED_PASSWORD:?defina CDH_SEED_PASSWORD en .env antes de levantar el servicio}"
+      # Entrada única desde Core Quartz. Las tres son opcionales y van juntas:
+      # vacías, el CDH se comporta exactamente como siempre.
+      CDH_BASE_PATH: "${CDH_BASE_PATH:-}"
+      CQ_URL_INTERNA: "${CQ_URL_INTERNA:-}"
+      CQ_SSO_SECRETO: "${CQ_SSO_SECRETO:-}"
 
     volumes:
       # Base SQLite y fotografías. Sin este volumen se pierden al recrear.
       - cdh-data:/app/data
 
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # La sonda sigue al prefijo: con CDH_BASE_PATH=/cdh la salud vive en
+      # /cdh/api/health y la ruta de antes ya no existe.
+      test: ["CMD", "node", "-e", "fetch(`http://127.0.0.1:3000${process.env.CDH_BASE_PATH||''}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 20s

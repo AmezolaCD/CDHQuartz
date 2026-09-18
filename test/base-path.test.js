@@ -149,6 +149,9 @@ describe('Con CDH_BASE_PATH=/cdh todo vive bajo el prefijo', () => {
     const r = await fetch(`${cdh.base}/cdh`, { redirect: 'manual' });
     assert.equal(r.status, 301);
     assert.equal(r.headers.get('location'), '/cdh/');
+    // El cuerpo se consume siempre: una respuesta a medio leer deja el socket
+    // sin poder reutilizarse y la siguiente petición falla por red.
+    await r.text();
   });
 
   test('la interfaz se sirve en /cdh/ y trae <base href="/cdh/">', async () => {

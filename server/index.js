@@ -1,6 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
+import fs from 'node:fs';
 import multer from 'multer';
 import { ROOT, migrate, isSeeded } from './lib/db.js';
 import { loadSettings } from './lib/settings.js';
@@ -10,6 +11,7 @@ import { MovementError } from './lib/movements.js';
 import { seed } from './db/seed.js';
 
 import authRoutes from './routes/auth.js';
+import ssoRoutes from './routes/sso.js';
 import roomRoutes from './routes/rooms.js';
 import cleaningRoutes from './routes/cleaning.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -19,6 +21,26 @@ import reportRoutes from './routes/reports.js';
 import integrationRoutes from './routes/integrations.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
+
+/**
+ * Prefijo de ruta bajo el que se sirve todo (fase 05 de Core Quartz).
+ *
+ * Vacío por omisión: **sin `CDH_BASE_PATH` el CDH es idéntico al de siempre**.
+ * Con `/cdh` se puede publicar en `core-quartz.vercel.app/cdh/` detrás de las
+ * reescrituras de Vercel. Se normaliza aquí para que el resto del archivo no
+ * tenga que preocuparse por barras de más.
+ */
+export const BASE_PATH = normalizarPrefijo(process.env.CDH_BASE_PATH);
+
+function normalizarPrefijo(texto) {
+  const crudo = String(texto ?? '').trim();
+  if (crudo === '' || crudo === '/') return '';
+  const segmentos = crudo.split('/').filter(Boolean);
+  if (segmentos.some((s) => !/^[A-Za-z0-9._~-]+$/.test(s))) {
+    throw new Error(`CDH_BASE_PATH no es un prefijo válido: ${JSON.stringify(texto)}`);
+  }
+  return segmentos.map((s) => `/${s}`).join('');
+}
 
 migrate();
 if (!isSeeded()) {
@@ -32,25 +54,36 @@ const app = express();
 app.set('trust proxy', true);
 app.disable('x-powered-by');
 
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
-app.use(attachUser);
+// El prefijo queda al alcance de las rutas (la cookie lo necesita para su
+// `Path`), sin que ninguna tenga que volver a leer el entorno.
+app.locals.basePath = BASE_PATH;
 
-app.use('/api/auth', authRoutes);
-app.use('/api/rooms', roomRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/cleaning', cleaningRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/reports', reportRoutes);
-app.use('/api/integrations', integrationRoutes);
-app.use('/api', catalogRoutes);
+// Sin prefijo, `rutas` se monta en la raíz y todo queda exactamente igual que
+// antes; con prefijo, basta montarlo una vez y nada más cambia de lugar.
+const rutas = express.Router();
 
-app.get('/api/health', (req, res) => {
+rutas.use(express.json({ limit: '1mb' }));
+rutas.use(express.urlencoded({ extended: true }));
+rutas.use(cookieParser());
+rutas.use(attachUser);
+
+// La entrada única va **antes** que `/api/auth`: comparte prefijo con el login
+// de siempre y tiene que ganarle la ruta `/sso`.
+rutas.use('/api/auth/sso', ssoRoutes);
+rutas.use('/api/auth', authRoutes);
+rutas.use('/api/rooms', roomRoutes);
+rutas.use('/api/dashboard', dashboardRoutes);
+rutas.use('/api/cleaning', cleaningRoutes);
+rutas.use('/api/admin', adminRoutes);
+rutas.use('/api/reports', reportRoutes);
+rutas.use('/api/integrations', integrationRoutes);
+rutas.use('/api', catalogRoutes);
+
+rutas.get('/api/health', (req, res) => {
   res.json({ ok: true, app: 'CDH', hotel: 'Hotel Quartz', time: new Date().toISOString() });
 });
 
-app.use('/api/{*path}', (req, res) => {
+rutas.use('/api/{*path}', (req, res) => {
   res.status(404).json({ error: `Ruta de API no encontrada: ${req.method} ${req.originalUrl}` });
 });
 
@@ -59,8 +92,31 @@ app.use('/api/{*path}', (req, res) => {
 // en el nombre: con una caché larga, un despliegue nuevo tardaba hasta una
 // hora en llegar al navegador. HTML, JS y CSS se revalidan siempre (ETag
 // responde 304 y no se retransmiten); las imágenes y fuentes sí se cachean.
-app.use(express.static(path.join(ROOT, 'public'), {
-  index: 'index.html',
+//
+// `index.html` se sirve a mano —y no como estático— porque lleva un
+// `<base href>` que depende del prefijo: la interfaz usa rutas relativas
+// (`api/…`, `css/…`) y el enrutador es por `#/`, así que con la base correcta
+// todo resuelve bajo el prefijo sin tocar una sola ruta del cliente.
+const PAGINA = path.join(ROOT, 'public', 'index.html');
+let paginaServida = null;
+
+function paginaConBase() {
+  if (paginaServida === null) {
+    const html = fs.readFileSync(PAGINA, 'utf8');
+    paginaServida = html.replace('<head>', `<head>\n<base href="${BASE_PATH}/">`);
+  }
+  return paginaServida;
+}
+
+const enviarPagina = (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(paginaConBase());
+};
+
+rutas.get('/', enviarPagina);
+
+rutas.use(express.static(path.join(ROOT, 'public'), {
+  index: false,
   etag: true,
   lastModified: true,
   setHeaders(res, filePath) {
@@ -68,7 +124,21 @@ app.use(express.static(path.join(ROOT, 'public'), {
       /\.(html|js|css)$/i.test(filePath) ? 'no-cache' : 'public, max-age=604800');
   },
 }));
-app.get('/{*path}', (req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
+rutas.get('/{*path}', enviarPagina);
+
+// `GET /cdh` (sin barra final) tiene que llegar a `/cdh/`, o lo relativo del
+// `<base>` resolvería un nivel más arriba.
+//
+// La comprobación mira `originalUrl` a propósito: sin enrutado estricto Express
+// trata `/cdh` y `/cdh/` como la misma ruta, así que un redirect a secas se
+// redirigía a sí mismo para siempre.
+if (BASE_PATH !== '') {
+  app.get(BASE_PATH, (req, res, next) => {
+    if (req.originalUrl.split('?')[0].endsWith('/')) return next();
+    res.redirect(301, `${BASE_PATH}/`);
+  });
+}
+app.use(BASE_PATH === '' ? '/' : BASE_PATH, rutas);
 
 // ------------------------------------------------------- Manejo de errores
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
@@ -94,7 +164,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 
 app.listen(PORT, () => {
   console.log(`[cdh] CDH — Control de Detalles por Habitación`);
-  console.log(`[cdh] Hotel Quartz · escuchando en http://localhost:${PORT}`);
+  console.log(`[cdh] Hotel Quartz · escuchando en http://localhost:${PORT}${BASE_PATH}/`);
 });
 
 export default app;
