@@ -1,0 +1,22 @@
+# ============================================================================
+# Finales de línea.
+#
+# Todo lo de este repositorio lo terminan leyendo Linux, Docker o Node: no hay
+# un archivo que quiera CRLF. Sin esto, Git para Windows trae
+# `core.autocrlf=true` y saca los archivos con CRLF, así que un clon en
+# Windows construye la imagen desde un `Dockerfile` con retornos de carro y
+# copia el `Caddyfile` igual.
+#
+# `eol=lf` manda sobre `core.autocrlf`, así que arregla los clones de Windows
+# sin pedirle a nadie que cambie su configuración de git.
+# ============================================================================
+
+# Texto detectado automáticamente, siempre con LF en disco.
+* text=auto eol=lf
+
+# Los dos sin extensión, por si la detección automática duda.
+Dockerfile        text eol=lf
+deploy/Caddyfile  text eol=lf
+
+# Binarios: que git no los toque.
+*.png binary
