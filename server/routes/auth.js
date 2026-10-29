@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-  COOKIE_NAME, findUserByUsername, verifyPassword, createSession,
+  COOKIE_NAME, findUserByUsername, verifyPassword, createSession, ORIGEN_PORTAL,
   revokeSession, withPermissions, hashPassword, getUserById,
 } from '../lib/auth.js';
 import { update, one } from '../lib/db.js';
@@ -15,7 +15,9 @@ const publicUser = (u) => ({
   role: { id: u.role_id, code: u.role_code, name: u.role_name },
   department: u.department_id ? { id: u.department_id, code: u.department_code, name: u.department_name } : null,
   departmentScope: !!u.department_scope,
-  mustChangePassword: !!u.must_change_password,
+  // Con el portal ya comprobó la identidad: pedir una contraseña del CDH
+  // aquí sería volver a pedir lo que el portal ya verificó.
+  mustChangePassword: !!u.must_change_password && u.sesion_origen !== ORIGEN_PORTAL,
   lastLoginAt: u.last_login_at,
   permissions: u.permissions ?? [],
 });

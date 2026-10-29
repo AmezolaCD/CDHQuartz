@@ -13,7 +13,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import {
-  COOKIE_NAME, createSession, findUserByUsername, revokeAllSessions, withPermissions,
+  COOKIE_NAME, createSession, findUserByUsername, revokeAllSessions, withPermissions, ORIGEN_PORTAL,
 } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { asyncRoute } from '../middleware/auth.js';
@@ -129,7 +129,7 @@ if (ACTIVA) {
     }
 
     const usuario = withPermissions(encontrado);
-    const { token, expiresAt } = createSession(usuario, req);
+    const { token, expiresAt } = createSession(usuario, req, ORIGEN_PORTAL);
     audit({ entityType: 'auth', entityId: usuario.id, entityLabel: usuario.username,
       action: 'sso_login', actor: usuario, after: { origen: 'core-quartz' }, req });
 
