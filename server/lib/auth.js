@@ -48,7 +48,10 @@ export function withPermissions(user) {
   return { ...user, permissions: permissionsOf(user.role_id) };
 }
 
-export function createSession(user, req) {
+/** Origen de una sesión que entró desde Core Quartz: el portal ya la identificó. */
+export const ORIGEN_PORTAL = 'core-quartz';
+
+export function createSession(user, req, origen = 'directo') {
   const t = stamp();
   const token = crypto.randomBytes(32).toString('hex');
   const hours = Number(getSetting('session_hours', 12)) || 12;
@@ -58,6 +61,7 @@ export function createSession(user, req) {
     token_hash: hashToken(token),
     ip: clientIp(req),
     user_agent: req?.headers?.['user-agent']?.slice(0, 400) ?? null,
+    origen,
     created_at: t.iso,
     expires_at: new Date(t.epoch + hours * 3600_000).toISOString(),
   });
@@ -75,7 +79,7 @@ export function resolveSession(token) {
   if (new Date(row.expires_at).getTime() < Date.now()) return null;
   const user = getUserById(row.user_id);
   if (!user || !user.active) return null;
-  return { session: row, user: withPermissions(user) };
+  return { session: row, user: { ...withPermissions(user), sesion_origen: row.origen } };
 }
 
 export function revokeSession(token) {

@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   token_hash    TEXT NOT NULL UNIQUE,
   ip            TEXT,
   user_agent    TEXT,
+  origen        TEXT NOT NULL DEFAULT 'directo',
   created_at    TEXT NOT NULL,
   expires_at    TEXT NOT NULL,
   revoked_at    TEXT

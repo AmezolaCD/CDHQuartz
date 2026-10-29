@@ -200,10 +200,22 @@ describe('Canje válido', () => {
     assert.ok(cdh.auditoria('sso_login') >= 1);
   });
 
-  test('un usuario obligado a cambiar contraseña sí entra (lo exige la interfaz)', async () => {
+  test('un usuario obligado a cambiar contraseña entra por el portal sin que se le vuelva a pedir', async () => {
     cdh.exigirCambio('amadellaves');
     const r = await canjear(cdh, 'codigo-con-cambio');
     assert.equal(r.status, 302);
+    const cookie = r.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+    const yo = await fetch(cdh.url('/api/auth/me'), { headers: { cookie } });
+    assert.equal((await yo.json()).user.mustChangePassword, false);
+  });
+
+  test('el mismo usuario que entra con su contraseña sí debe cambiarla', async () => {
+    cdh.exigirCambio('amadellaves');
+    const r = await fetch(cdh.url('/api/auth/login'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'amadellaves', password: CLAVE }),
+    });
+    assert.equal(r.status, 200);
     const cookie = r.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
     const yo = await fetch(cdh.url('/api/auth/me'), { headers: { cookie } });
     assert.equal((await yo.json()).user.mustChangePassword, true);

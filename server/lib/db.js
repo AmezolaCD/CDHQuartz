@@ -61,6 +61,13 @@ function grupoDeAccion() {
  */
 export const COLUMNAS_NUEVAS = [
   banderaDeAccion('cross_department'),
+  // Por dónde entró la sesión: 'directo' (contraseña del CDH) o 'core-quartz'
+  // (el portal ya comprobó la identidad). Sólo cambia qué pantalla se muestra.
+  {
+    table: 'sessions',
+    column: 'origen',
+    ddl: "TEXT NOT NULL DEFAULT 'directo'",
+  },
   {
     table: 'movement_types',
     column: 'closes_scope',
