@@ -77,6 +77,26 @@ export const COLUMNAS_NUEVAS = [
     column: 'is_service',
     ddl: 'INTEGER NOT NULL DEFAULT 0',
   },
+  // El desacuerdo con el PMS que sigue abierto: qué estado reporta Arpón y
+  // desde cuándo. No es un estado más —la habitación conserva el suyo— sino
+  // un aviso que convive con él, como "Reporte abierto".
+  {
+    table: 'rooms',
+    column: 'pms_conflict_status',
+    ddl: 'TEXT',
+  },
+  {
+    table: 'rooms',
+    column: 'pms_conflict_at',
+    ddl: 'TEXT',
+  },
+  // Último aviso del PMS que se procesó, con la hora de Arpón normalizada a
+  // UTC. Dos marcas del mismo reloj sí son comparables; la del CDH no lo es.
+  {
+    table: 'rooms',
+    column: 'pms_event_at',
+    ddl: 'TEXT',
+  },
   {
     table: 'movement_types',
     column: 'closes_scope',

@@ -31,6 +31,12 @@ services:
       CQ_URL_INTERNA: "${CQ_URL_INTERNA:-}"
       CQ_SSO_SECRETO: "${CQ_SSO_SECRETO:-}"
 
+      # Entrada de cambios desde el PMS (Arpón). Sin el token la ruta responde
+      # 503 y no acepta nada; además hay que encender `pms_inbound_enabled` en
+      # Administración > Configuración. El token NO va en la base de datos:
+      # `settings` se expone a quien administra y esto es un secreto.
+      CDH_PMS_TOKEN: "${CDH_PMS_TOKEN:-}"
+
     volumes:
       # Base SQLite y fotografías. Sin este volumen se pierden al recrear.
       - cdh-data:/app/data

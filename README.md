@@ -431,10 +431,20 @@ limpieza la cierra sola**, sin un paso extra que recordar. Desde el mismo
 centro, Recepción toma habitaciones ya limpias para **entregarlas**: pasan a
 *Entrada nueva* y dejan de contar como disponibles.
 
-**Lo que cambie aquí hay que cambiarlo también en el PMS.** Mientras el CDH y
-Arpón Enterprise no estén enlazados, toda acción que mueva lo que el PMS
-también lleva lo avisa **antes** de guardar, no después. El nombre del PMS y el
-propio aviso se configuran (`pms_name`, `pms_manual_sync`).
+**Lo que cambie aquí hay que cambiarlo también en el PMS.** El enlace con Arpón
+Enterprise va en un solo sentido: lo que se mueve allá llega solo, lo que se
+captura aquí no viaja. Así que toda acción que mueva lo que el PMS también
+lleva lo avisa **antes** de guardar, no después. El nombre del PMS y el propio
+aviso se configuran (`pms_name`, `pms_manual_sync`).
+
+**Lo que Arpón cambie llega solo.** Si Ama de Llaves marca una habitación en el
+PMS, el rack se actualiza sin que nadie lo repita. Con una excepción: una
+habitación *Fuera de servicio* o en *Discrepancia* no la mueve el PMS mientras
+su pendiente siga abierto —si no, una habitación averiada volvería a la
+venta—. El aviso queda en el historial y la habitación aparece en *Requiere
+atención* diciendo qué estado le atribuye Arpón, para que quien opera decida.
+Se enciende en *Administración > Configuración* (`pms_inbound_enabled`) y
+necesita el token `CDH_PMS_TOKEN`.
 
 **Si el huésped estará en la habitación es un dato del REPORTE, no un estado.**
 Quien reporta a Mantenimiento o a Sistemas contesta si lo encontrarán dentro, y

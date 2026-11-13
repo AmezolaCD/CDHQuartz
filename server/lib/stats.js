@@ -249,12 +249,19 @@ export function attention({ limit = 60 } = {}) {
            s.code AS status_code, s.name AS status_name, s.icon AS status_icon,
            s.color AS status_color, s.counts_blocked, s.counts_maintenance,
            s.counts_attention, s.attention_weight, r.status_changed_at, r.updated_at,
+           r.pms_conflict_status, r.pms_conflict_at,
            u.full_name AS updated_by_name
       FROM rooms r
       JOIN floors f ON f.id = r.floor_id
       JOIN room_statuses s ON s.id = r.status_id
       LEFT JOIN users u ON u.id = r.updated_by
      WHERE r.active = 1`);
+
+  // El estado que reporta el PMS llega como código; en la lista se lee con el
+  // nombre que usa el hotel, que es el mismo de Arpón.
+  const nombrePorEstado = new Map(
+    all('SELECT code, name FROM room_statuses').map((s) => [s.code, s.name]),
+  );
 
   const items = [];
   for (const r of rooms) {
@@ -287,6 +294,19 @@ export function attention({ limit = 60 } = {}) {
     }
     const rr = recByRoom.get(r.id);
     if (rr) reasons.push({ code: 'reincidencia', label: `Reincidente: ${rr.incidents} incidencias en ${rec.window} días`, weight: 5 });
+
+    // El PMS dice una cosa y el CDH otra. No es un estado —la habitación
+    // conserva el suyo— sino un aviso que convive con él: quien mira el rack
+    // ve que Arpón la cree vendible y decide. Peso alto porque las dos
+    // pantallas en desacuerdo es justo lo que el CDH existe para detectar.
+    if (r.pms_conflict_status) {
+      const nombre = nombrePorEstado.get(r.pms_conflict_status) ?? r.pms_conflict_status;
+      reasons.push({
+        code: 'pms',
+        label: `El PMS la reporta "${nombre}"`,
+        weight: 4,
+      });
+    }
 
     if (reasons.length) {
       items.push({
