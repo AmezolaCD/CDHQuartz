@@ -1,7 +1,8 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { requireAuth, asyncRoute } from '../middleware/auth.js';
-import { one } from '../lib/db.js';
+import { one, update, transaction } from '../lib/db.js';
+import { stamp } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 import { getSettingBool } from '../lib/settings.js';
 import { findUserByUsername, withPermissions } from '../lib/auth.js';
@@ -156,6 +157,12 @@ router.post('/pms/events', asyncRoute((req, res) => {
   // El reintento normal del webhook cae aquí: ni movimiento ni bitácora, que
   // sería ruido en el historial y mentiría a los contadores de reincidencia.
   if (decision.reason === 'sin_cambio') {
+    // Arpón volvió a coincidir con el CDH: si había un desacuerdo anotado, se
+    // terminó. No deja movimiento —no pasó nada— pero el aviso del rack sí
+    // tiene que apagarse.
+    if (room.pms_conflict_status) {
+      update('rooms', room.id, { pms_conflict_status: null, pms_conflict_at: null });
+    }
     return res.json({ ok: true, applied: false, reason: 'sin_cambio', room: room.number });
   }
 
@@ -174,14 +181,29 @@ router.post('/pms/events', asyncRoute((req, res) => {
     // aplica y no lo lleva cuando la regla conservó el del CDH: en los dos
     // casos queda el movimiento, porque el historial cuenta lo que pasó y no
     // sólo lo que cambió.
-    const resultado = recordMovement({
-      roomId: room.id,
-      user: actor,
-      req,
-      movementTypeCode: PMS_MOVEMENT_TYPE,
-      statusCode: decision.apply ? status : null,
-      comment,
-    });
+    // El movimiento y el aviso del rack van juntos o no van: si se registrara
+    // el movimiento y fallara la anotación, el desacuerdo quedaría en el
+    // historial pero invisible para quien opera.
+    const resultado = transaction(() => {
+      const r = recordMovement({
+        roomId: room.id,
+        user: actor,
+        req,
+        movementTypeCode: PMS_MOVEMENT_TYPE,
+        statusCode: decision.apply ? status : null,
+        comment,
+      });
+      // El desacuerdo se anota en la habitación para que salga en "Requiere
+      // atención". Cuando el aviso SÍ se aplica no hace falta: `recordMovement`
+      // limpia la marca al mover el estado.
+      if (decision.reason === 'estado_propio_del_cdh') {
+        update('rooms', room.id, {
+          pms_conflict_status: status,
+          pms_conflict_at: stamp().iso,
+        });
+      }
+      return r;
+    })();
     return res.json({
       ok: true,
       applied: resultado.statusChanged,

@@ -161,15 +161,57 @@ con `closes_cleaning_request` —hoy «Limpieza terminada»— da por atendida l
 solicitud pendiente de esa habitación dentro de la misma transacción, y sin
 crear un movimiento aparte, porque no ocurrió nada aparte.
 
-## Mientras el PMS no esté enlazado
+## El enlace con el PMS va en un solo sentido
 
 El CDH y Arpón Enterprise llevan cada uno su copia del estado de la habitación.
-Hasta que hablen entre ellos, la única garantía de que no se descuadren es que
-quien opera lo tenga delante: los tipos de movimiento marcados con `warns_pms`
-muestran el aviso **antes** de guardar, no como un mensaje que se desvanece
-después. El nombre del PMS (`pms_name`) y el propio aviso (`pms_manual_sync`)
-son configuraciones, no texto fijo: el día que se enlacen, se apaga sin tocar
-código.
+Ya hablan entre ellos, pero **en una sola dirección**: Arpón avisa de sus
+cambios y el CDH los sigue. Lo que se captura en el CDH no viaja al PMS, así
+que el aviso previo sigue haciendo falta: los tipos de movimiento marcados con
+`warns_pms` lo muestran **antes** de guardar, no como un mensaje que se
+desvanece después. El nombre del PMS (`pms_name`) y el propio aviso
+(`pms_manual_sync`) siguen siendo configuraciones.
+
+La entrada vive en `/api/integrations/pms/events` y nace apagada: hacen falta
+el token en `CDH_PMS_TOKEN` y el interruptor `pms_inbound_enabled`. Cada aviso
+entra por `recordMovement`, la misma puerta que todo lo demás, firmado por una
+identidad de servicio (`arpon`) que no es una persona y no inicia sesión: el
+historial es inmutable y cada movimiento necesita autor.
+
+### Qué estado gana
+
+No es una carrera de relojes, porque los dos sistemas no saben lo mismo.
+
+> Arpón manda en los cinco estados que las dos pantallas comparten. El CDH
+> manda en los dos que añade —*Fuera de servicio* y *Discrepancia*— mientras
+> el pendiente que los sostiene siga abierto.
+
+Esos dos no son etiquetas: los crea un movimiento `is_incident` con comentario
+obligatorio, o sea que detrás de cada uno hay un pendiente y un autor. Si una
+habitación está fuera de servicio por una fuga y Arpón avisa *Disponible
+limpio*, aplicarlo la pone otra vez a la venta. De los dos errores posibles
+—una habitación vendible que el rack muestra bloqueada, o una averiada que el
+rack muestra vendible— el segundo cuesta un huésped reubicado y el primero unas
+horas sin vender.
+
+La regla se agota sola: cerrado el pendiente en el CDH, la habitación vuelve a
+los cinco compartidos y Arpón recupera el mando sin que nadie configure nada.
+
+El aviso que no gana **no se pierde**: deja su movimiento en el historial, con
+la hora y el usuario de Arpón, y la habitación queda marcada con el estado que
+el PMS le atribuye (`pms_conflict_status`), que sale en *Requiere atención*
+como un motivo más. Se apaga en cuanto la habitación se mueve por cualquier
+vía o el PMS vuelve a coincidir. No se reutiliza *Discrepancia* para esto:
+ese estado significa que Ama de Llaves y Recepción no coinciden, y cargarle
+además el desacuerdo con el PMS volvería ambiguo el único estado cuyo valor es
+ser inequívoco.
+
+### Lo que todavía no se puede
+
+Ninguna de las APIs de Arpón permite **leer** el estatus de limpieza de una
+habitación concreta: `GetRoomsByHotel` entrega las claves sin estado y
+`GetAvailability` sólo contadores por tipo y fecha. Así que el CDH no puede
+cotejar el rack completo ni confirmar que un cambio surtió efecto; depende de
+que Arpón avise. Está pedido como endpoint nuevo.
 
 ## Los reportes y la venta
 

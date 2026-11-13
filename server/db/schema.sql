@@ -172,6 +172,11 @@ CREATE TABLE IF NOT EXISTS rooms (
   active            INTEGER NOT NULL DEFAULT 1,   -- baja lógica: nunca se borra
   status_changed_at TEXT,
   occupancy_changed_at TEXT,
+  -- Desacuerdo abierto con el PMS: el estado que Arpón reporta y no se aplicó,
+  -- porque el del CDH está sostenido por un pendiente. Se limpia solo en cuanto
+  -- la habitación se mueve o el PMS vuelve a coincidir.
+  pms_conflict_status  TEXT,
+  pms_conflict_at      TEXT,
   updated_at        TEXT,
   updated_by        INTEGER REFERENCES users(id),
   last_movement_id  INTEGER,

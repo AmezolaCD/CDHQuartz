@@ -103,6 +103,18 @@ async function arrancarCdh({ token = TOKEN } = {}) {
            FROM movements WHERE room_number = @n ORDER BY id`, { n: String(numero) });
     },
 
+    conflicto(numero) {
+      return api.consulta(
+        'SELECT pms_conflict_status AS estado, pms_conflict_at AS desde FROM rooms WHERE number = @n',
+        { n: String(numero) })[0];
+    },
+
+    async atencion(cookie) {
+      const r = await fetch(`${base}/api/dashboard/attention?limit=300`, { headers: { cookie } });
+      assert.equal(r.status, 200);
+      return (await r.json()).items;
+    },
+
     auditoria(accion) {
       return api.consulta('SELECT COUNT(*) AS n FROM audit_log WHERE action = @a', { a: accion })[0].n;
     },
@@ -285,5 +297,61 @@ describe('Entrada del PMS encendida', () => {
     const r = await cdh.evento({ roomKey: '0502', status: 'OCUPADO_LIMPIO' });
     assert.equal((await r.json()).applied, true);
     assert.equal(cdh.estado('502').code, 'OCUPADO_LIMPIO');
+  });
+});
+
+describe('El desacuerdo con el PMS se ve en el rack', () => {
+  let cdh; let cookie;
+  before(async () => { cdh = await arrancarCdh(); cookie = await cdh.encenderEntrada(); });
+  after(async () => { await cdh?.parar(); });
+
+  test('un aviso rechazado queda anotado en la habitación', async () => {
+    cdh.forzarEstado('602', 'FUERA_SERVICIO');
+    assert.equal(cdh.conflicto('602').estado, null, 'premisa: nace sin desacuerdo');
+
+    const r = await cdh.evento({ roomKey: '0602', status: 'DISPONIBLE_LIMPIO' });
+    assert.equal((await r.json()).reason, 'estado_propio_del_cdh');
+
+    const c = cdh.conflicto('602');
+    assert.equal(c.estado, 'DISPONIBLE_LIMPIO');
+    assert.ok(c.desde, 'debe guardar desde cuándo');
+  });
+
+  test('aparece en "Requiere atención", con el nombre que usa el hotel', async () => {
+    const items = await cdh.atencion(cookie);
+    const fila = items.find((i) => i.number === '602');
+    assert.ok(fila, 'la habitación debería estar en la lista');
+    const motivo = fila.reasons.find((x) => x.code === 'pms');
+    assert.ok(motivo, `no se vio el motivo del PMS: ${JSON.stringify(fila.reasons)}`);
+    // El código no se le muestra a nadie: se lee con el nombre del estado.
+    assert.match(motivo.label, /Disponible limpio/);
+    assert.ok(!motivo.label.includes('DISPONIBLE_LIMPIO'));
+  });
+
+  test('si Arpón vuelve a coincidir, el aviso se apaga sin dejar movimiento', async () => {
+    const antes = cdh.movimientos('602').length;
+    const r = await cdh.evento({ roomKey: '0602', status: 'FUERA_SERVICIO' });
+    assert.equal((await r.json()).reason, 'sin_cambio');
+    assert.equal(cdh.conflicto('602').estado, null, 'el desacuerdo terminó');
+    assert.equal(cdh.movimientos('602').length, antes, 'no pasó nada que registrar');
+  });
+
+  test('y ya no sale en la lista por ese motivo', async () => {
+    const fila = (await cdh.atencion(cookie)).find((i) => i.number === '602');
+    // Sigue en la lista por estar fuera de servicio, pero sin el aviso del PMS.
+    assert.ok(!fila.reasons.some((x) => x.code === 'pms'));
+  });
+
+  test('mover la habitación por cualquier vía también limpia el desacuerdo', async () => {
+    cdh.forzarEstado('603', 'FUERA_SERVICIO');
+    await cdh.evento({ roomKey: '0603', status: 'DISPONIBLE_LIMPIO' });
+    assert.equal(cdh.conflicto('603').estado, 'DISPONIBLE_LIMPIO', 'premisa: hay desacuerdo');
+
+    // Se levanta el fuera de servicio y entra un aviso que SÍ se aplica: la
+    // marca la limpia `recordMovement`, no la ruta.
+    cdh.forzarEstado('603', 'SALIDA');
+    const r = await cdh.evento({ roomKey: '0603', status: 'DISPONIBLE_LIMPIO' });
+    assert.equal((await r.json()).applied, true);
+    assert.equal(cdh.conflicto('603').estado, null);
   });
 });

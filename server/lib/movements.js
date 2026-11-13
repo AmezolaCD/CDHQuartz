@@ -360,6 +360,11 @@ export function recordMovement({
       updated_at: t.iso,
       updated_by: user.id,
       last_movement_id: primaryId,
+      // Un cambio de estado por CUALQUIER vía deja sin sentido un desacuerdo
+      // anterior con el PMS: ya no es el estado sobre el que discrepábamos.
+      // Vive en la única puerta de escritura, así que vale igual para la acción
+      // rápida, el cambio manual, el cambio en bloque y lo que entre del PMS.
+      ...(newStatus ? { pms_conflict_status: null, pms_conflict_at: null } : {}),
     });
 
     // ------------------------- 3b. La solicitud de limpieza pendiente
