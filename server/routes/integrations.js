@@ -9,6 +9,7 @@ import { findUserByUsername, withPermissions } from '../lib/auth.js';
 import { getRoomByNumber, recordMovement, MovementError } from '../lib/movements.js';
 import {
   PMS_MOVEMENT_TYPE, roomNumberFromKey, decidePrecedence, isStalePmsEvent, pmsComment,
+  pmsEventInstant,
 } from '../lib/pms.js';
 
 const router = express.Router();
@@ -42,6 +43,19 @@ const PMS_USERNAME = 'arpon';
 const tokenConfigurado = () => process.env.CDH_PMS_TOKEN ?? '';
 
 const entradaEncendida = () => getSettingBool('pms_inbound_enabled', false);
+
+/**
+ * El instante del aviso, sólo si avanza sobre el último que ya se procesó.
+ * Devuelve null cuando no hay nada que actualizar, para no escribir de más en
+ * cada reintento.
+ */
+function instanteSiAvanza(room, changedAt) {
+  const instante = pmsEventInstant(changedAt);
+  if (!instante) return null;
+  const previo = room.pms_event_at ? Date.parse(room.pms_event_at) : NaN;
+  if (Number.isFinite(previo) && Date.parse(instante) <= previo) return null;
+  return instante;
+}
 
 /** Compara en tiempo constante y sin delatar el largo, igual que el SSO. */
 function mismoToken(enviado) {
@@ -140,7 +154,7 @@ router.post('/pms/events', asyncRoute((req, res) => {
     return res.json({ ok: true, applied: false, reason: 'habitacion_desconocida' });
   }
 
-  if (isStalePmsEvent({ changedAt, statusChangedAt: room.status_changed_at })) {
+  if (isStalePmsEvent({ changedAt, lastEventAt: room.pms_event_at })) {
     audit({
       entityType: 'integration', entityId: room.id, entityLabel: 'pms',
       action: 'pms_evento_rezagado', actor, roomId: room.id,
@@ -160,9 +174,14 @@ router.post('/pms/events', asyncRoute((req, res) => {
     // Arpón volvió a coincidir con el CDH: si había un desacuerdo anotado, se
     // terminó. No deja movimiento —no pasó nada— pero el aviso del rack sí
     // tiene que apagarse.
+    const cambios = {};
     if (room.pms_conflict_status) {
-      update('rooms', room.id, { pms_conflict_status: null, pms_conflict_at: null });
+      cambios.pms_conflict_status = null;
+      cambios.pms_conflict_at = null;
     }
+    const instante = instanteSiAvanza(room, changedAt);
+    if (instante) cambios.pms_event_at = instante;
+    if (Object.keys(cambios).length) update('rooms', room.id, cambios);
     return res.json({ ok: true, applied: false, reason: 'sin_cambio', room: room.number });
   }
 
@@ -193,15 +212,20 @@ router.post('/pms/events', asyncRoute((req, res) => {
         statusCode: decision.apply ? status : null,
         comment,
       });
+      const marcas = {};
       // El desacuerdo se anota en la habitación para que salga en "Requiere
       // atención". Cuando el aviso SÍ se aplica no hace falta: `recordMovement`
       // limpia la marca al mover el estado.
       if (decision.reason === 'estado_propio_del_cdh') {
-        update('rooms', room.id, {
-          pms_conflict_status: status,
-          pms_conflict_at: stamp().iso,
-        });
+        marcas.pms_conflict_status = status;
+        marcas.pms_conflict_at = stamp().iso;
       }
+      // Hasta dónde hemos visto avanzar el reloj de Arpón, que es contra lo que
+      // se detecta una entrega desordenada. Se guarda aunque el aviso no se
+      // haya aplicado: igual nos dijo qué cree el PMS y cuándo.
+      const instante = instanteSiAvanza(room, changedAt);
+      if (instante) marcas.pms_event_at = instante;
+      if (Object.keys(marcas).length) update('rooms', room.id, marcas);
       return r;
     })();
     return res.json({

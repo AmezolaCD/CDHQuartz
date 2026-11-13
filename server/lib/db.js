@@ -90,6 +90,13 @@ export const COLUMNAS_NUEVAS = [
     column: 'pms_conflict_at',
     ddl: 'TEXT',
   },
+  // Último aviso del PMS que se procesó, con la hora de Arpón normalizada a
+  // UTC. Dos marcas del mismo reloj sí son comparables; la del CDH no lo es.
+  {
+    table: 'rooms',
+    column: 'pms_event_at',
+    ddl: 'TEXT',
+  },
   {
     table: 'movement_types',
     column: 'closes_scope',
