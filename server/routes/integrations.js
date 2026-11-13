@@ -10,6 +10,7 @@ import { getRoomByNumber, recordMovement, MovementError } from '../lib/movements
 import { openIncidentsForRoom } from '../lib/stats.js';
 import {
   PMS_MOVEMENT_TYPE, roomNumberFromKey, decidePrecedence, isStalePmsEvent, pmsComment,
+  pmsEventKey, isDuplicatePmsEvent, epochFromPmsTimestamp,
 } from '../lib/pms.js';
 
 const router = express.Router();
@@ -141,6 +142,21 @@ router.post('/pms/events', asyncRoute((req, res) => {
     return res.json({ ok: true, applied: false, reason: 'habitacion_desconocida' });
   }
 
+  // Un reintento del webhook repite el cuerpo tal cual. Si el aviso no trae
+  // fecha, es lo único que permite distinguirlo de un cambio nuevo: sin esto,
+  // un reintento tardío devuelve la habitación a un estado ya superado y deja
+  // un movimiento duplicado en un historial que no se puede borrar.
+  const clave = pmsEventKey({ roomKey: cuerpo.roomKey, status, changedAt, changedBy });
+  if (isDuplicatePmsEvent({
+    key: clave,
+    lastKey: room.pms_last_event_key,
+    lastEpoch: room.pms_last_event_epoch,
+    now: stamp().epoch,
+    tieneFecha: epochFromPmsTimestamp(changedAt) !== null,
+  })) {
+    return res.json({ ok: true, applied: false, reason: 'duplicado', room: room.number });
+  }
+
   if (isStalePmsEvent({ changedAt, statusChangedAt: room.status_changed_at })) {
     audit({
       entityType: 'integration', entityId: room.id, entityLabel: 'pms',
@@ -167,7 +183,20 @@ router.post('/pms/events', asyncRoute((req, res) => {
     // terminó. No deja movimiento —no pasó nada— pero el aviso del rack sí
     // tiene que apagarse.
     if (room.pms_conflict_status) {
-      update('rooms', room.id, { pms_conflict_status: null, pms_conflict_at: null });
+      // No deja movimiento —no cambió nada de la habitación— pero sí entrada
+      // en la bitácora: apagar un aviso que sí se registró al encenderse no
+      // puede ser la única escritura sobre `rooms` sin rastro. Las dos cosas
+      // van juntas o no van.
+      transaction(() => {
+        update('rooms', room.id, { pms_conflict_status: null, pms_conflict_at: null });
+        audit({
+          entityType: 'integration', entityId: room.id, entityLabel: 'pms',
+          action: 'pms_desacuerdo_resuelto', actor, roomId: room.id,
+          reason: `Arpón volvió a coincidir con el CDH en "${room.status_name}".`,
+          before: { pms_conflict_status: room.pms_conflict_status },
+          after: { pms_conflict_status: null }, req,
+        });
+      })();
     }
     return res.json({ ok: true, applied: false, reason: 'sin_cambio', room: room.number });
   }
@@ -206,6 +235,16 @@ router.post('/pms/events', asyncRoute((req, res) => {
         update('rooms', room.id, {
           pms_conflict_status: status,
           pms_conflict_at: stamp().iso,
+        });
+      }
+      // Sólo se recuerda el aviso que SÍ se aplicó. Uno que no se aplicó no
+      // dejó nada que un reintento pueda duplicar, y repetirlo puede acabar
+      // en otra cosa: el mismo aviso que ayer perdió contra un pendiente
+      // abierto debe poder ganar hoy, cerrado el pendiente.
+      if (r.statusChanged) {
+        update('rooms', room.id, {
+          pms_last_event_key: clave,
+          pms_last_event_epoch: stamp().epoch,
         });
       }
       return r;

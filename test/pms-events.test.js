@@ -365,12 +365,53 @@ describe('El desacuerdo con el PMS se ve en el rack', () => {
     assert.equal((await r.json()).reason, 'sin_cambio');
     assert.equal(cdh.conflicto('602').estado, null, 'el desacuerdo terminó');
     assert.equal(cdh.movimientos('602').length, antes, 'no pasó nada que registrar');
+    // Pero sí queda constancia: encender el aviso se registró, apagarlo
+    // también. Era la única escritura sobre `rooms` que no dejaba rastro.
+    assert.ok(cdh.auditoria('pms_desacuerdo_resuelto') > 0, 'debe quedar en la bitácora');
   });
 
   test('y ya no sale en la lista por ese motivo', async () => {
     const fila = (await cdh.atencion(cookie)).find((i) => i.number === '602');
     // Sigue en la lista por estar fuera de servicio, pero sin el aviso del PMS.
     assert.ok(!fila.reasons.some((x) => x.code === 'pms'));
+  });
+
+  test('un reintento sin fecha no revierte lo que el hotel ya movió', async () => {
+    // El webhook repite el cuerpo tal cual. Si el aviso no trae fecha no hay
+    // forma de ordenarlo, así que antes de este arreglo el reintento volvía a
+    // aplicarse y devolvía la habitación a un estado ya superado.
+    cdh.forzarEstado('605', 'SALIDA');
+    const primero = await cdh.evento({ roomKey: '0605', status: 'OCUPADO_SUCIO' });
+    assert.equal((await primero.json()).applied, true);
+    assert.equal(cdh.estado('605').code, 'OCUPADO_SUCIO');
+
+    // El hotel la limpia y la deja lista.
+    cdh.forzarEstado('605', 'DISPONIBLE_LIMPIO');
+    const movimientos = cdh.movimientos('605').length;
+
+    // Llega el reintento del mismo aviso.
+    const reintento = await cdh.evento({ roomKey: '0605', status: 'OCUPADO_SUCIO' });
+    const cuerpo = await reintento.json();
+    assert.equal(cuerpo.applied, false);
+    assert.equal(cuerpo.reason, 'duplicado');
+    assert.equal(cdh.estado('605').code, 'DISPONIBLE_LIMPIO', 'no debió retroceder');
+    assert.equal(cdh.movimientos('605').length, movimientos, 'ni dejar movimiento de más');
+  });
+
+  test('con fecha, manda el orden y no el reconocimiento del cuerpo', async () => {
+    // Dos avisos iguales pero fechados distinto son dos avisos: el segundo es
+    // más nuevo que el último cambio, así que entra.
+    cdh.forzarEstado('606', 'SALIDA');
+    const r = await cdh.evento({
+      roomKey: '0606', status: 'OCUPADO_SUCIO', changedAt: '2099-01-01T10:00:00',
+    });
+    assert.equal((await r.json()).applied, true);
+
+    cdh.forzarEstado('606', 'SALIDA');
+    const otro = await cdh.evento({
+      roomKey: '0606', status: 'OCUPADO_SUCIO', changedAt: '2099-01-01T11:00:00',
+    });
+    assert.equal((await otro.json()).applied, true, 'un aviso fechado nuevo no es un reintento');
   });
 
   test('cerrado el pendiente, Arpón recupera el mando aunque el estado no cambie', async () => {

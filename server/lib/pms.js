@@ -156,6 +156,44 @@ export function isStalePmsEvent({ changedAt, statusChangedAt, tz = getTimezone()
 }
 
 /**
+ * Cuánto tiempo se reconoce un reintento como tal. Diez minutos cubren de
+ * sobra la tanda de reintentos de un webhook sin tapar un cambio real: que una
+ * habitación vuelva al MISMO estado anterior, con el MISMO autor y sin fecha,
+ * dentro de los diez minutos, no es algo que pase en un piso.
+ */
+export const VENTANA_DUPLICADO_MS = 10 * 60 * 1000;
+
+/** Lo que identifica a un aviso: si todo esto coincide, es el mismo. */
+export function pmsEventKey({ roomKey, status, changedAt, changedBy }) {
+  return [roomKey ?? '', status ?? '', changedAt ?? '', changedBy ?? ''].join('|');
+}
+
+/**
+ * ¿Es este aviso un reintento del anterior?
+ *
+ * Hace falta porque el contrato de Arpón no promete `changedAt` y ninguna de
+ * las cinco APIs documentadas trae un identificador de evento. Sin fecha,
+ * `isStalePmsEvent` no puede ordenar nada: un reintento tardío de un aviso ya
+ * aplicado volvería a aplicarse, devolviendo la habitación a un estado que el
+ * hotel ya dejó atrás y dejando un movimiento duplicado en un historial que no
+ * se puede borrar.
+ *
+ * Sólo actúa cuando NO hay fecha utilizable: con fecha, ordenar es mejor que
+ * adivinar, y un cambio real repetido trae una fecha nueva. Así el remedio no
+ * se come un aviso legítimo.
+ *
+ * Y sólo se recuerda el aviso que llegó a aplicarse: uno que no se aplicó no
+ * dejó nada que duplicar, y el mismo aviso que ayer perdió contra un pendiente
+ * abierto tiene que poder ganar hoy, cerrado el pendiente.
+ */
+export function isDuplicatePmsEvent({ key, lastKey, lastEpoch, now, tieneFecha }) {
+  if (tieneFecha) return false;
+  if (!lastKey || key !== lastKey) return false;
+  if (!Number.isFinite(lastEpoch)) return false;
+  return now - lastEpoch < VENTANA_DUPLICADO_MS;
+}
+
+/**
  * El comentario del movimiento, que es lo único que cuenta la historia cuando
  * el estado NO cambió. Recibe etiquetas ya resueltas: quien llama tiene la
  * tabla de estados a mano y aquí no se consulta nada.

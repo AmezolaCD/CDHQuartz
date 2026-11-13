@@ -90,6 +90,19 @@ export const COLUMNAS_NUEVAS = [
     column: 'pms_conflict_at',
     ddl: 'TEXT',
   },
+  // Con qué aviso del PMS se quedó la habitación la última vez, y cuándo. Es
+  // lo único que permite reconocer un reintento cuando el aviso no trae fecha:
+  // el contrato de Arpón no promete `changedAt` ni un identificador de evento.
+  {
+    table: 'rooms',
+    column: 'pms_last_event_key',
+    ddl: 'TEXT',
+  },
+  {
+    table: 'rooms',
+    column: 'pms_last_event_epoch',
+    ddl: 'INTEGER',
+  },
   {
     table: 'movement_types',
     column: 'closes_scope',

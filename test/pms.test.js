@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   roomNumberFromKey, decidePrecedence, epochFromPmsTimestamp, isStalePmsEvent,
   pmsComment, ESTADOS_PROPIOS_DEL_CDH, PMS_MOVEMENT_TYPE,
+  pmsEventKey, isDuplicatePmsEvent, VENTANA_DUPLICADO_MS,
 } from '../server/lib/pms.js';
 import { ROOM_STATUSES, MOVEMENT_TYPES, FLOOR_MAP } from '../server/db/catalog.js';
 
@@ -279,5 +280,58 @@ describe('El comentario del movimiento', () => {
     const c = pmsComment({ apply: true, incomingLabel: 'Salida' });
     assert.match(c, /Arpón reportó "Salida"/);
     assert.ok(!c.includes('()'), 'no debe quedar un paréntesis vacío');
+  });
+});
+
+describe('Reintentos del webhook, que llegan sin fecha', () => {
+  const clave = pmsEventKey({ roomKey: '0301', status: 'SALIDA', changedBy: 'ama01' });
+
+  test('el mismo aviso repetido en la ventana es un reintento', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: false,
+    }), true);
+  });
+
+  test('pasada la ventana ya no: podría ser un cambio de verdad', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000,
+      now: 1_000_000 + VENTANA_DUPLICADO_MS + 1, tieneFecha: false,
+    }), false);
+  });
+
+  test('con fecha utilizable no se mira la clave: ordenar es mejor que adivinar', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: true,
+    }), false);
+  });
+
+  test('otro aviso distinto no es un reintento', () => {
+    const otro = pmsEventKey({ roomKey: '0301', status: 'DISPONIBLE_LIMPIO', changedBy: 'ama01' });
+    assert.equal(isDuplicatePmsEvent({
+      key: otro, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: false,
+    }), false);
+  });
+
+  test('sin nada recordado, nada es reintento', () => {
+    for (const vacio of [null, undefined, '']) {
+      assert.equal(isDuplicatePmsEvent({
+        key: clave, lastKey: vacio, lastEpoch: 1_000_000, now: 1_000_001, tieneFecha: false,
+      }), false);
+    }
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: null, now: 1_000_001, tieneFecha: false,
+    }), false);
+  });
+
+  test('la clave distingue por habitación, estado, fecha y autor', () => {
+    const base = { roomKey: '0301', status: 'SALIDA', changedAt: '2026-11-13T09:00:00', changedBy: 'ama01' };
+    const igual = pmsEventKey({ ...base });
+    assert.equal(pmsEventKey(base), igual);
+    for (const campo of ['roomKey', 'status', 'changedAt', 'changedBy']) {
+      assert.notEqual(pmsEventKey({ ...base, [campo]: 'otro' }), igual, `${campo} debería contar`);
+    }
   });
 });
