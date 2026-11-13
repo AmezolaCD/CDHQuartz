@@ -67,6 +67,15 @@ export const ROLES = [
   { code: 'OTROS', name: 'Otros', department_scope: 1, is_system: 0,
     description: 'Consulta básica.',
     permissions: ['room.view','history.view'] },
+
+  // Identidad no interactiva del PMS. No es una persona: es con quién firma el
+  // CDH los cambios que entran de Arpón, para que el historial diga la verdad
+  // sobre su autor. `department_scope: 0` porque el PMS no pertenece a un
+  // departamento del hotel, y cuatro permisos exactos: mover el estado y
+  // dejar constancia. Nada de limpieza, reportes ni administración.
+  { code: 'PMS', name: 'PMS (Arpón)', department_scope: 0, is_system: 1,
+    description: 'Identidad no interactiva para los cambios que entran del PMS.',
+    permissions: ['room.view','room.status','movement.create','history.view'] },
 ];
 
 // Los estados son los que maneja Arpón, el PMS del hotel, con sus mismos
@@ -210,6 +219,10 @@ export const MOVEMENT_TYPES = [
   { code:'CLEAN_REQUEST_CANCEL', name:'Solicitud de limpieza cancelada',  category:'AMA', target_status:null, icon:'x',        is_quick_action:0, is_system:1, cross_department:1, sort_order:33 },
   { code:'STATUS_CHANGE', name:'Cambio de estado',      category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:20 },
   { code:'DETAIL_UPDATE', name:'Actualización de detalle', category:null,target_status:null,                  icon:'edit',         is_quick_action:0, is_system:1, sort_order:21 },
+  // Un cambio que vino del PMS. Lleva estado cuando se aplicó y no lo lleva
+  // cuando la regla de precedencia lo conservó: en los dos casos queda el
+  // movimiento, porque el historial cuenta lo que pasó, no sólo lo que cambió.
+  { code:'PMS_EVENT',     name:'Evento del PMS',        category:null,   target_status:null,                  icon:'swap',         is_quick_action:0, is_system:1, sort_order:22 },
 ];
 
 export const ROOM_TYPES = [
@@ -237,6 +250,17 @@ export const FLOOR_MAP = [
   { number: 11, name: 'Piso 11', rooms: [1101,1102,1103,1104,1106,1107,1108,1109,1110,1111,1112,null,null,null,null,null,null,null,null] },
 ];
 
+/**
+ * Usuarios NO INTERACTIVOS: la identidad con la que un sistema externo firma
+ * lo que escribe en el CDH. No son personas y no inician sesión por ninguna
+ * vía; existen porque el historial es inmutable y cada movimiento necesita un
+ * autor real (`movements.user_id` es NOT NULL). `seed` los crea en una base
+ * nueva y `upgrade` los añade a una que ya esté en uso.
+ */
+export const SERVICE_USERS = [
+  { username: 'arpon', full_name: 'Arpón Enterprise', role: 'PMS' },
+];
+
 export const GRID_COLUMNS = 19; // A..S
 
 export const SETTINGS = [
@@ -250,6 +274,7 @@ export const SETTINGS = [
   { key:'bulk_max_rooms',         value:'40',             label:'Máximo de habitaciones por cambio en bloque', grp:'Operación', type:'number' },
   { key:'pms_name',               value:'Arpón Enterprise', label:'Nombre del PMS del hotel',  grp:'Operación', type:'text' },
   { key:'pms_manual_sync',        value:'1',              label:'Avisar que el cambio debe repetirse en el PMS', grp:'Operación', type:'boolean' },
+  { key:'pms_inbound_enabled',    value:'0',              label:'Recibir cambios de estado desde el PMS',        grp:'Operación', type:'boolean' },
   { key:'notify_critical',        value:'1',              label:'Notificar incidencias críticas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_blocked',         value:'1',              label:'Notificar habitaciones bloqueadas', grp:'Notificaciones', type:'boolean' },
   { key:'notify_maintenance',     value:'1',              label:'Notificar mantenimiento crítico', grp:'Notificaciones', type:'boolean' },

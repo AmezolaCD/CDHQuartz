@@ -17,9 +17,19 @@ export function hashPassword(plain) {
   return bcrypt.hashSync(plain, 10);
 }
 
+/**
+ * Valor de `password_hash` para una identidad de servicio.
+ *
+ * `password_hash` es NOT NULL y no existe contraseña que deba abrir estas
+ * cuentas. No es un hash de bcrypt, y `compareSync` devuelve false ante un
+ * hash malformado en vez de lanzar —comprobado—, así que ninguna contraseña
+ * lo satisface. Tiene que ser una cadena: con `null` sí lanza.
+ */
+export const HASH_SIN_ACCESO = '!sin-acceso';
+
 const USER_SQL = `
   SELECT u.id, u.username, u.full_name, u.email, u.active, u.department_id,
-         u.must_change_password, u.last_login_at, u.role_id,
+         u.must_change_password, u.is_service, u.last_login_at, u.role_id,
          r.code AS role_code, r.name AS role_name, r.department_scope,
          d.code AS department_code, d.name AS department_name
     FROM users u

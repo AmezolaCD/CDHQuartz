@@ -128,6 +128,20 @@ if (ACTIVA) {
         'Entraste a Core Quartz, pero aquí no encontramos tu usuario activo. Avísale a Sistemas.');
     }
 
+    // Core Quartz valida el FORMATO del usuario del CDH (R7:
+    // `[a-z0-9._-]{3,40}`) pero no reserva los nombres de servicio: `arpon`
+    // pasa su validación sin problema. Si el portal llega a nombrar una
+    // identidad de servicio —por error o porque alguien la asignó a una
+    // persona— el candado está aquí: esas identidades no son de nadie y no
+    // abren sesión. El CDH no delega esta decisión.
+    if (encontrado.is_service) {
+      audit({ entityType: 'auth', entityId: encontrado.id, entityLabel: usuarioModulo,
+        action: 'sso_rechazo', actor: null,
+        reason: 'Identidad de servicio: no admite entrada única.', req });
+      return paginaDeError(res, 403, 'Ese usuario del CDH no es de una persona',
+        'El usuario que Core Quartz nombró es una identidad interna del sistema y no puede abrir sesión. Avísale a Sistemas.');
+    }
+
     const usuario = withPermissions(encontrado);
     const { token, expiresAt } = createSession(usuario, req, ORIGEN_PORTAL);
     audit({ entityType: 'auth', entityId: usuario.id, entityLabel: usuario.username,
@@ -149,7 +163,14 @@ if (ACTIVA) {
   router.get('/usuario/:username', (req, res) => {
     if (!mismoSecreto(req.get('x-cq-secreto'))) return res.status(404).json({ error: 'No encontrado.' });
     const encontrado = findUserByUsername(String(req.params.username));
-    res.json({ existe: !!encontrado, activo: !!encontrado?.active });
+    // `servicio` es aditivo: Core Quartz puede ignorarlo sin romperse, y
+    // cuando lo lea podrá rechazar la asignación antes de guardarla en vez de
+    // descubrirlo en el canje.
+    res.json({
+      existe: !!encontrado,
+      activo: !!encontrado?.active,
+      servicio: !!encontrado?.is_service,
+    });
   });
 
   // ------------------------------------------------ Revocación (R6)

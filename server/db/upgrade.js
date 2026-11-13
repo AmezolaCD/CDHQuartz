@@ -13,10 +13,11 @@
 import { db, migrate, one, all, insert, transaction, COLUMNAS_NUEVAS } from '../lib/db.js';
 import { audit } from '../lib/audit.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
+import { HASH_SIN_ACCESO } from '../lib/auth.js';
 import { loadSettings, setSettingValue } from '../lib/settings.js';
 import {
   DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES, CLEANING_PRIORITIES,
-  CATEGORIES, MOVEMENT_TYPES, SETTINGS,
+  CATEGORIES, MOVEMENT_TYPES, SETTINGS, SERVICE_USERS,
 } from './catalog.js';
 
 /**
@@ -309,6 +310,31 @@ export function upgrade({ dryRun = false, timezone = null, promote = null, quiet
           anotar('Permiso al rol Administrador', p.name);
         }
       }
+    }
+
+    // ------------------------------------------- Identidades de servicio
+    // Un sistema externo que escribe en el CDH necesita autor: el historial
+    // es inmutable y `movements.user_id` es NOT NULL. No es una persona, así
+    // que va sin departamento, sin contraseña utilizable y marcada
+    // `is_service` para que ni el login ni la entrada única la acepten.
+    for (const s of SERVICE_USERS) {
+      if (one('SELECT id FROM users WHERE lower(username) = lower(@u)', { u: s.username })) continue;
+      const rolId = idPor('roles', s.role);
+      if (!rolId) {
+        avisos.push(`la identidad de servicio "${s.username}" no se creó: falta el rol ${s.role}`);
+        continue;
+      }
+      insert('users', {
+        username: s.username,
+        full_name: s.full_name,
+        email: null,
+        password_hash: HASH_SIN_ACCESO,
+        role_id: rolId,
+        department_id: null,
+        must_change_password: 0,
+        is_service: 1,
+      });
+      anotar('Identidad de servicio', `${s.full_name} (${s.username})`);
     }
 
     // ----------------------------------------------------------- Estados
