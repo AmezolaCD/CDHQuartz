@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS users (
   phone         TEXT,
   active        INTEGER NOT NULL DEFAULT 1,
   must_change_password INTEGER NOT NULL DEFAULT 0,
+  -- Identidad no interactiva (el PMS). No inicia sesión por ninguna vía.
+  is_service    INTEGER NOT NULL DEFAULT 0,
   last_login_at TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at    TEXT

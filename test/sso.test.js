@@ -260,6 +260,32 @@ describe('Canjes que el shell rechaza', () => {
     assert.ok(r.status >= 400);
     assert.equal(r.headers.getSetCookie().length, 0);
   });
+
+  // Core Quartz valida el FORMATO del usuario del CDH (R7: `[a-z0-9._-]{3,40}`)
+  // pero no reserva los nombres de servicio: "arpon" pasa su validación. Si el
+  // portal llega a nombrar la identidad con la que el PMS escribe —por error o
+  // porque alguien se la asignó a una persona— esa persona entraría al CDH con
+  // permiso para mover el estado de las habitaciones. El CDH no delega esto.
+  test('una identidad de servicio no abre sesión, aunque el portal la nombre', async () => {
+    shell.estado.siguiente = { estado: 200, cuerpo: { usuario_modulo: 'arpon', nombre: 'Arpón' } };
+    const r = await canjear(cdh, 'codigo-identidad-de-servicio');
+    assert.equal(r.status, 403);
+    assert.equal(r.headers.getSetCookie().length, 0, 'no debe poner cookie');
+    assert.match(await r.text(), /no es de una persona/i);
+  });
+
+  // La misma invariante por la otra puerta: su hash no es utilizable, pero el
+  // candado es explícito para que siga valiendo si alguien le pusiera una
+  // contraseña real directamente en la base.
+  test('una identidad de servicio tampoco entra con contraseña', async () => {
+    const r = await fetch(cdh.url('/api/auth/login'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'arpon', password: 'Quartz#2026' }),
+    });
+    assert.equal(r.status, 401);
+    assert.equal(r.headers.getSetCookie().length, 0, 'no debe poner cookie');
+  });
 });
 
 describe('El shell no responde', () => {
@@ -295,7 +321,7 @@ describe('Rutas internas para el shell', () => {
       headers: { 'x-cq-secreto': SECRETO },
     });
     assert.equal(r.status, 200);
-    assert.deepEqual(await r.json(), { existe: true, activo: true });
+    assert.deepEqual(await r.json(), { existe: true, activo: true, servicio: false });
   });
 
   test('un usuario que no existe se reporta como tal, no como error', async () => {
@@ -303,7 +329,18 @@ describe('Rutas internas para el shell', () => {
       headers: { 'x-cq-secreto': SECRETO },
     });
     assert.equal(r.status, 200);
-    assert.deepEqual(await r.json(), { existe: false, activo: false });
+    assert.deepEqual(await r.json(), { existe: false, activo: false, servicio: false });
+  });
+
+  // El portal valida el FORMATO del usuario del CDH (R7) pero no reserva los
+  // nombres de servicio: "arpon" pasa su validación. Con este campo puede
+  // negarse a asignarlo antes de guardarlo, en vez de descubrirlo en el canje.
+  test('una identidad de servicio se reporta como tal', async () => {
+    const r = await fetch(cdh.url('/api/auth/sso/usuario/arpon'), {
+      headers: { 'x-cq-secreto': SECRETO },
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { existe: true, activo: true, servicio: true });
   });
 
   test('sin secreto la ruta no existe', async () => {

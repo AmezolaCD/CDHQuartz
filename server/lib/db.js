@@ -68,6 +68,15 @@ export const COLUMNAS_NUEVAS = [
     column: 'origen',
     ddl: "TEXT NOT NULL DEFAULT 'directo'",
   },
+  // Identidad no interactiva: con ella firma el CDH lo que entra del PMS.
+  // Core Quartz puede nombrar cualquier usuario del CDH al canjear la entrada
+  // única, así que el candado vive aquí: un usuario de servicio no inicia
+  // sesión por ninguna vía, ni con contraseña ni desde el portal.
+  {
+    table: 'users',
+    column: 'is_service',
+    ddl: 'INTEGER NOT NULL DEFAULT 0',
+  },
   {
     table: 'movement_types',
     column: 'closes_scope',

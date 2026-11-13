@@ -30,6 +30,21 @@ router.post('/login', asyncRoute((req, res) => {
   const found = findUserByUsername(String(username).trim());
   const row = found ? one('SELECT password_hash FROM users WHERE id = @id', { id: found.id }) : null;
 
+  // Una identidad de servicio no es de nadie y no inicia sesión, ni con la
+  // contraseña correcta. Su hash ya es inservible y `verifyPassword` devolvería
+  // false de todos modos, pero el candado queda explícito para que siga valiendo
+  // si alguien le pusiera una contraseña real directamente en la base. Se
+  // responde lo mismo que a una credencial equivocada: que exista no es asunto
+  // de quien lo intenta.
+  if (found?.is_service) {
+    audit({
+      entityType: 'auth', entityId: found.id, entityLabel: found.username,
+      action: 'login_denied', actor: null,
+      reason: 'Identidad de servicio: no admite inicio de sesión.', req,
+    });
+    return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+  }
+
   if (!found || !row || !verifyPassword(String(password), row.password_hash)) {
     audit({
       entityType: 'auth', entityId: found?.id ?? null, entityLabel: String(username),

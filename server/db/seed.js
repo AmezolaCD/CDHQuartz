@@ -1,10 +1,11 @@
 import bcrypt from 'bcryptjs';
 import { db, migrate, insert, one, transaction } from '../lib/db.js';
 import { esEjecutadoDirectamente } from '../lib/cli.js';
+import { HASH_SIN_ACCESO } from '../lib/auth.js';
 import { stamp, setTimezone } from '../lib/time.js';
 import {
   DEPARTMENTS, PERMISSIONS, ROLES, ROOM_STATUSES, ROOM_TYPES, CLEANING_PRIORITIES,
-  CATEGORIES, MOVEMENT_TYPES, FLOOR_MAP, SETTINGS,
+  CATEGORIES, MOVEMENT_TYPES, FLOOR_MAP, SETTINGS, SERVICE_USERS,
 } from './catalog.js';
 
 const SEED_PASSWORD = process.env.CDH_SEED_PASSWORD || 'Quartz#2026';
@@ -117,6 +118,23 @@ export function seed({ quiet = false } = {}) {
       });
     }
 
+    // Identidades de servicio: sin departamento —el PMS no es un área del
+    // hotel—, sin contraseña utilizable y marcadas para que ni el login ni la
+    // entrada única de Core Quartz las acepten.
+    for (const s of SERVICE_USERS) {
+      insert('users', {
+        username: s.username,
+        full_name: s.full_name,
+        email: null,
+        password_hash: HASH_SIN_ACCESO,
+        role_id: role[s.role],
+        department_id: null,
+        must_change_password: 0,
+        is_service: 1,
+        created_at: t.iso,
+      });
+    }
+
     // -------------------------- Pisos y habitaciones (distribución real) ----
     const defaultStatus = status.DISPONIBLE_LIMPIO;
     const fieldRows = db.prepare('SELECT id, default_value FROM fields').all();
@@ -156,13 +174,17 @@ export function seed({ quiet = false } = {}) {
       created_at: t.iso, created_epoch: t.epoch, local_date: t.localDate, local_time: t.localTime,
     });
 
-    return { floors: FLOOR_MAP.length, rooms: roomCount, users: SEED_USERS.length };
+    return {
+      floors: FLOOR_MAP.length, rooms: roomCount,
+      users: SEED_USERS.length, services: SERVICE_USERS.length,
+    };
   })();
 
   const target = Number(one("SELECT value FROM settings WHERE key='target_room_count'").value);
   log(`[seed] Pisos: ${summary.floors}`);
   log(`[seed] Habitaciones cargadas: ${summary.rooms} de ${target} (faltan ${target - summary.rooms}, se dan de alta en Administración > Catálogo de habitaciones)`);
   log(`[seed] Usuarios: ${summary.users} — contraseña inicial: ${SEED_PASSWORD}`);
+  log(`[seed] Identidades de servicio: ${summary.services} (sin acceso interactivo)`);
   return summary;
 }
 
