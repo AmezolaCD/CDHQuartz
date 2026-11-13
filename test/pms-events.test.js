@@ -103,6 +103,11 @@ async function arrancarCdh({ token = TOKEN } = {}) {
            FROM movements WHERE room_number = @n ORDER BY id`, { n: String(numero) });
     },
 
+    ultimoEvento(numero) {
+      return api.consulta('SELECT pms_event_at AS at FROM rooms WHERE number = @n',
+        { n: String(numero) })[0].at;
+    },
+
     conflicto(numero) {
       return api.consulta(
         'SELECT pms_conflict_status AS estado, pms_conflict_at AS desde FROM rooms WHERE number = @n',
@@ -241,9 +246,12 @@ describe('Entrada del PMS encendida', () => {
   });
 
   test('"0301" se resuelve a la habitación 301', async () => {
-    const r = await cdh.evento({ roomKey: '0301', status: 'SALIDA' });
+    const r = await cdh.evento({
+      roomKey: '0301', status: 'SALIDA', changedAt: new Date().toISOString(),
+    });
     assert.equal((await r.json()).room, '301');
     assert.equal(cdh.estado('301').code, 'SALIDA');
+    assert.ok(cdh.ultimoEvento('301'), 'queda guardado hasta dónde vimos el reloj de Arpón');
   });
 
   test('un roomKey de tres dígitos también resuelve: el formato de producción no está confirmado', async () => {
@@ -285,8 +293,10 @@ describe('Entrada del PMS encendida', () => {
     assert.ok(cdh.auditoria('pms_evento_ignorado') >= 1);
   });
 
-  test('un evento rezagado se descarta sin tocar el estado', async () => {
+  test('un evento posterior a otro más nuevo del PMS se descarta', async () => {
+    // La 301 ya recibió un aviso con hora de ahora en la prueba de arriba.
     const antes = cdh.estado('301');
+    const marca = cdh.ultimoEvento('301');
     const r = await cdh.evento({
       roomKey: '0301', status: 'OCUPADO_LIMPIO',
       changedAt: '2020-01-01T08:00:00',
@@ -294,7 +304,32 @@ describe('Entrada del PMS encendida', () => {
     assert.equal(r.status, 200);
     assert.equal((await r.json()).reason, 'evento_rezagado');
     assert.equal(cdh.estado('301').code, antes.code);
+    assert.equal(cdh.ultimoEvento('301'), marca, 'un aviso viejo no mueve la marca');
     assert.ok(cdh.auditoria('pms_evento_rezagado') >= 1);
+  });
+
+  test('el primer aviso de una habitación se aplica aunque traiga hora vieja', async () => {
+    // El caso del primer día. Antes se comparaba contra `status_changed_at`,
+    // que en una base recién sembrada vale la hora de arranque de las 155, y
+    // un aviso legítimo con hora anterior se perdía en silencio.
+    assert.equal(cdh.ultimoEvento('304'), null, 'premisa: sin avisos previos');
+    const r = await cdh.evento({
+      roomKey: '0304', status: 'OCUPADO_SUCIO', changedAt: '2026-11-01T07:30:00',
+    });
+    assert.equal((await r.json()).applied, true);
+    assert.equal(cdh.estado('304').code, 'OCUPADO_SUCIO');
+  });
+
+  test('un cambio hecho en el CDH no vuelve viejo al siguiente aviso de Arpón', async () => {
+    // Autoridad, no orden: en los cinco compartidos manda Arpón. El reloj del
+    // CDH no entra en la comparación, que es lo que evita que un desfase entre
+    // los dos relojes descarte avisos buenos.
+    cdh.forzarEstado('305', 'OCUPADO_LIMPIO');
+    const r = await cdh.evento({
+      roomKey: '0305', status: 'OCUPADO_SUCIO', changedAt: '2026-11-01T07:30:00',
+    });
+    assert.equal((await r.json()).applied, true);
+    assert.equal(cdh.estado('305').code, 'OCUPADO_SUCIO');
   });
 
   test('fuera de servicio no vuelve a la venta, y el aviso queda en el historial', async () => {

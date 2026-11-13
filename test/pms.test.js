@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 import {
   roomNumberFromKey, decidePrecedence, epochFromPmsTimestamp, isStalePmsEvent,
-  pmsComment, ESTADOS_PROPIOS_DEL_CDH, PMS_MOVEMENT_TYPE,
+  pmsComment, pmsEventInstant, ESTADOS_PROPIOS_DEL_CDH, PMS_MOVEMENT_TYPE,
   pmsEventKey, isDuplicatePmsEvent, VENTANA_DUPLICADO_MS,
 } from '../server/lib/pms.js';
 import { ROOM_STATUSES, MOVEMENT_TYPES, FLOOR_MAP } from '../server/db/catalog.js';
@@ -218,39 +218,75 @@ describe('La hora del PMS, que viene sin zona', () => {
   });
 });
 
-describe('Eventos rezagados', () => {
+describe('El instante que se guarda', () => {
   const tz = 'America/Tijuana';
 
-  test('un aviso anterior al último cambio se descarta', () => {
-    assert.equal(isStalePmsEvent({
-      changedAt: '2026-11-13T08:00:00',               // 16:00Z
-      statusChangedAt: '2026-11-13T17:00:00.000Z',
-      tz,
-    }), true);
+  test('normaliza a UTC, venga con zona o sin ella', () => {
+    assert.equal(pmsEventInstant('2026-11-13T09:14:00', tz), '2026-11-13T17:14:00.000Z');
+    assert.equal(pmsEventInstant('2026-11-13T17:14:00Z', tz), '2026-11-13T17:14:00.000Z');
+    assert.equal(pmsEventInstant('2026-11-13T09:14:00-08:00', tz), '2026-11-13T17:14:00.000Z');
+  });
+
+  test('lo que vuelve se puede volver a leer sin perder nada', () => {
+    const guardado = pmsEventInstant('2026-11-13T09:14:00', tz);
+    assert.equal(epochFromPmsTimestamp(guardado, tz), epochFromPmsTimestamp('2026-11-13T09:14:00', tz));
+  });
+
+  test('una fecha que no se entiende no se guarda', () => {
+    for (const malo of [null, '', 'ayer', 42]) assert.equal(pmsEventInstant(malo, tz), null);
+  });
+});
+
+describe('Entregas desordenadas', () => {
+  const tz = 'America/Tijuana';
+  // Como lo guarda la ruta: el instante del último aviso del PMS, en UTC.
+  const anterior = pmsEventInstant('2026-11-13T09:00:00', tz);
+
+  test('un aviso anterior al último del PMS se descarta', () => {
+    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T08:00:00', lastEventAt: anterior, tz }), true);
   });
 
   test('un aviso posterior se procesa', () => {
+    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T09:14:00', lastEventAt: anterior, tz }), false);
+  });
+
+  test('el mismo instante no es desorden: es un reintento', () => {
+    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T09:00:00', lastEventAt: anterior, tz }), false);
+  });
+
+  test('sin un aviso previo no hay nada que comparar, así que se procesa', () => {
+    // Éste es el caso del primer día: antes se comparaba contra
+    // `rooms.status_changed_at`, que en una base recién sembrada vale la hora
+    // de arranque de las 155 y no un cambio real. Un aviso legítimo con hora
+    // un poco anterior se perdía en silencio.
+    assert.equal(isStalePmsEvent({ changedAt: '2020-01-01T08:00:00', lastEventAt: null, tz }), false);
+    assert.equal(isStalePmsEvent({ changedAt: '2020-01-01T08:00:00', lastEventAt: '', tz }), false);
+  });
+
+  test('un cambio hecho en el CDH no vuelve viejo a un aviso de Arpón', () => {
+    // No es cuestión de orden sino de autoridad, y la decide la precedencia.
+    // La función ni mira el reloj del CDH: compara dos marcas de Arpón, que es
+    // lo único comparable entre sí.
     assert.equal(isStalePmsEvent({
-      changedAt: '2026-11-13T09:14:00',               // 17:14Z
-      statusChangedAt: '2026-11-13T17:00:00.000Z',
+      changedAt: '2026-11-13T08:00:00',
+      lastEventAt: null,
+      statusChangedAt: '2026-11-13T23:00:00.000Z',   // se ignora a propósito
       tz,
     }), false);
   });
 
-  test('comparar sin convertir la zona descartaría un cambio bueno', () => {
-    // Éste es el error que la conversión evita: leído como UTC, "09:14"
-    // parece anterior a las 16:00Z y el cambio se perdería en silencio.
-    const evento = '2026-11-13T09:14:00';
-    const actual = '2026-11-13T16:00:00.000Z';        // 08:00 local
-    assert.ok(Date.parse(`${evento}Z`) < Date.parse(actual), 'premisa de la trampa');
-    assert.equal(isStalePmsEvent({ changedAt: evento, statusChangedAt: actual, tz }), false);
+  test('la conversión de zona sigue importando entre dos marcas de Arpón', () => {
+    // El aviso llega sin zona y el guardado está en UTC: leído como UTC,
+    // "09:14" parecería anterior a las 17:00Z y se perdería.
+    const guardado = '2026-11-13T17:00:00.000Z';      // 09:00 local
+    assert.ok(Date.parse('2026-11-13T09:14:00Z') < Date.parse(guardado), 'premisa de la trampa');
+    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T09:14:00', lastEventAt: guardado, tz }), false);
   });
 
   test('ante la duda no se descarta', () => {
-    const actual = '2026-11-13T17:00:00.000Z';
-    assert.equal(isStalePmsEvent({ changedAt: null, statusChangedAt: actual, tz }), false);
-    assert.equal(isStalePmsEvent({ changedAt: 'ayer', statusChangedAt: actual, tz }), false);
-    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T08:00:00', statusChangedAt: null, tz }), false);
+    assert.equal(isStalePmsEvent({ changedAt: null, lastEventAt: anterior, tz }), false);
+    assert.equal(isStalePmsEvent({ changedAt: 'ayer', lastEventAt: anterior, tz }), false);
+    assert.equal(isStalePmsEvent({ changedAt: '2026-11-13T08:00:00', lastEventAt: 'ayer', tz }), false);
   });
 });
 

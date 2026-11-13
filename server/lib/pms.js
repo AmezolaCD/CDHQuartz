@@ -138,21 +138,48 @@ export function epochFromPmsTimestamp(texto, tz = getTimezone()) {
 }
 
 /**
- * ¿El evento llegó tarde y trae un estado ya superado?
+ * Instante de un evento del PMS, listo para guardar.
  *
- * Los reintentos del webhook pueden llegar desordenados. Sin esto, un aviso
- * rezagado revive un estado que el hotel ya dejó atrás.
+ * Se normaliza a UTC al escribirlo para que dos avisos se puedan comparar sin
+ * volver a adivinar el formato: Arpón manda a veces con zona y a veces sin
+ * ella. Devuelve null si la fecha no se entiende, y entonces no se guarda nada.
+ */
+export function pmsEventInstant(changedAt, tz = getTimezone()) {
+  const t = epochFromPmsTimestamp(changedAt, tz);
+  return t === null ? null : new Date(t).toISOString();
+}
+
+/**
+ * ¿El evento llegó desordenado, después de uno más nuevo del PMS?
  *
- * Ante la duda NO se descarta: si el evento no trae fecha, o la habitación no
- * tiene `status_changed_at`, se procesa. Perder un cambio real es peor que
+ * Los reintentos del webhook pueden llegar en cualquier orden. Sin esto, un
+ * aviso rezagado revive un estado que Arpón ya dejó atrás.
+ *
+ * SE COMPARA CONTRA EL ÚLTIMO EVENTO DEL PMS, no contra el último cambio de la
+ * habitación, y la razón es que los relojes son dos. `changedAt` lo pone
+ * Arpón; `rooms.status_changed_at` lo pone el CDH. Compararlos mide la
+ * diferencia entre los dos relojes además del orden de los hechos: si Arpón va
+ * unos minutos atrasado, todo aviso que llegue poco después de un cambio
+ * nuestro se descartaría sin que nada esté mal. Dos marcas de Arpón, en
+ * cambio, sí son comparables entre sí.
+ *
+ * Lo que esta regla NO hace es impedir que un aviso de Arpón pise un cambio
+ * reciente del CDH. Eso no es una cuestión de orden sino de autoridad, y la
+ * decide `decidePrecedence`: en los cinco estados compartidos manda Arpón,
+ * porque es el sistema de registro del hotel, y lo que se captura en el CDH
+ * hay que repetirlo allá —es lo que avisa `warns_pms` antes de guardar—.
+ * Mezclar las dos reglas vuelve difusas las dos.
+ *
+ * Ante la duda NO se descarta: sin fecha en el evento, o sin un evento previo
+ * contra el que comparar, se procesa. Perder un cambio real es peor que
  * registrar uno de más, que al menos queda visible en el historial.
  */
-export function isStalePmsEvent({ changedAt, statusChangedAt, tz = getTimezone() }) {
+export function isStalePmsEvent({ changedAt, lastEventAt, tz = getTimezone() }) {
   const evento = epochFromPmsTimestamp(changedAt, tz);
   if (evento === null) return false;
-  const actual = statusChangedAt ? Date.parse(statusChangedAt) : NaN;
-  if (!Number.isFinite(actual)) return false;
-  return evento < actual;
+  const anterior = epochFromPmsTimestamp(lastEventAt, tz);
+  if (anterior === null) return false;
+  return evento < anterior;
 }
 
 /**

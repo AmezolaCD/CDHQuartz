@@ -217,6 +217,29 @@ ese estado significa que Ama de Llaves y Recepción no coinciden, y cargarle
 además el desacuerdo con el PMS volvería ambiguo el único estado cuyo valor es
 ser inequívoco.
 
+### El orden de entrega y la autoridad son dos cosas
+
+Los reintentos del webhook pueden llegar desordenados, así que un aviso que
+viene detrás de otro más nuevo del PMS se descarta. Se compara contra
+`rooms.pms_event_at` —la hora del último aviso procesado— y **no** contra
+`rooms.status_changed_at`, porque los relojes son dos: `changedAt` lo pone
+Arpón y `status_changed_at` lo pone el CDH. Compararlos mediría el desfase
+entre los dos relojes además del orden de los hechos, y si Arpón va unos
+minutos atrasado, todo aviso que llegara poco después de un cambio nuestro se
+descartaría sin que nada estuviera mal. Dos marcas de Arpón sí son
+comparables entre sí.
+
+Esa regla no impide que un aviso de Arpón pise un cambio reciente del CDH, y
+es deliberado: eso no es orden de entrega sino autoridad, y la autoridad la
+decide la precedencia de arriba. En los cinco estados compartidos manda Arpón,
+que es el sistema de registro del hotel; lo que se captura aquí hay que
+repetirlo allá, y es justo lo que avisa `warns_pms` antes de guardar. Mezclar
+las dos reglas volvería difusas las dos.
+
+Sin un aviso previo contra el que comparar no se descarta nada: perder un
+cambio real es peor que registrar uno de más, que al menos queda en el
+historial.
+
 ### Lo que todavía no se puede
 
 El **formato de las claves de habitación no está confirmado** para el hotel de
