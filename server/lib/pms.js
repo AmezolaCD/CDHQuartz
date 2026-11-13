@@ -26,18 +26,21 @@ export const ESTADOS_PROPIOS_DEL_CDH = ['FUERA_SERVICIO', 'DISCREPANCIA'];
 /**
  * roomKey de Arpón → número de habitación del CDH.
  *
- * Arpón escribe las 155 con cuatro caracteres y ceros a la izquierda ("0301",
- * "1002"); el CDH las guarda sin rellenar ("301", "1002"). Comprobado contra
- * el entorno de pruebas: las 155 miden exactamente cuatro y coinciden una a
- * una con `FLOOR_MAP`.
+ * El hotel de pruebas las escribe con cuatro caracteres y ceros a la izquierda
+ * ("0301", "1002"); el CDH las guarda sin rellenar ("301", "1002"). Pero el
+ * ejemplo de la documentación de `GetRoomsByHotel` las trae de tres ("101",
+ * "201"), así que el formato NO está confirmado para el hotel de producción, y
+ * exigir cuatro rechazaría el cien por cien de los eventos si allá son tres.
  *
- * Se exige el formato en vez de aceptar cualquier cosa que parezca un número:
- * un "415" sin rellenar significaría que Arpón cambió de contrato, y es mejor
- * enterarse por un rechazo que aplicar un cambio sobre una habitación a medias
- * de adivinar.
+ * Por eso se aceptan tres o cuatro dígitos y se normaliza quitando los ceros.
+ * No es adivinar: el número resultante tiene que existir en el rack, y de eso
+ * se encarga quien llama —una habitación que el CDH no tiene se registra como
+ * `habitacion_desconocida` y no cambia nada—. Las 155 del hotel son de tres o
+ * cuatro dígitos, así que ninguna clave válida se pierde y ninguna inventada
+ * se aplica.
  */
 export function roomNumberFromKey(roomKey) {
-  if (typeof roomKey !== 'string' || !/^\d{4}$/.test(roomKey)) {
+  if (typeof roomKey !== 'string' || !/^\d{3,4}$/.test(roomKey)) {
     return { ok: false, reason: 'formato_de_roomkey' };
   }
   const number = String(parseInt(roomKey, 10));
@@ -61,19 +64,28 @@ export function roomNumberFromKey(roomKey) {
  * al hotel un huésped reubicado y el primero unas horas sin vender. Por esa
  * asimetría gana el pendiente abierto.
  *
- * Y la regla se agota sola: en cuanto alguien cierra el pendiente en el CDH
- * ("Mantenimiento completado", "Liberar habitación") la habitación vuelve a los
- * cinco compartidos y Arpón recupera el mando sin que nadie configure nada.
+ * Y la regla se agota sola: lo que sostiene a esos dos estados es el pendiente
+ * abierto, no el nombre del estado. Cerrado el pendiente —"Mantenimiento
+ * completado", "Liberar habitación", o corregir el campo en falla— la
+ * habitación vuelve a seguir al PMS, aunque su estado en el CDH todavía diga
+ * "Fuera de servicio": cerrar el pendiente no cambia el estado por sí solo, y
+ * sin esto la habitación dejaría de escuchar a Arpón para siempre.
+ *
+ * `pendienteAbierto` vale `true` por omisión, y es deliberado: si quien llama
+ * se olvida de averiguarlo, el CDH conserva su estado. De los dos errores
+ * posibles, dejar sin vender unas horas cuesta menos que vender una habitación
+ * averiada.
  *
  * Un código que no sea de los conocidos NO se filtra aquí: pasa, y lo rechaza
  * `recordMovement`, que es quien puede comprobarlo contra la tabla de estados
  * y ver si además está activo. Esta función decide precedencia, no existencia.
  */
-export function decidePrecedence({ currentStatusCode, incomingStatusCode }) {
+export function decidePrecedence({ currentStatusCode, incomingStatusCode, pendienteAbierto = true }) {
   if (!incomingStatusCode) return { apply: false, reason: 'sin_estado' };
   if (incomingStatusCode === currentStatusCode) return { apply: false, reason: 'sin_cambio' };
   if (ESTADOS_PROPIOS_DEL_CDH.includes(currentStatusCode)) {
-    return { apply: false, reason: 'estado_propio_del_cdh' };
+    if (pendienteAbierto) return { apply: false, reason: 'estado_propio_del_cdh' };
+    return { apply: true, reason: 'pendiente_cerrado' };
   }
   return { apply: true, reason: 'aplicado' };
 }

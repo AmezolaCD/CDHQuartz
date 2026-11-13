@@ -7,6 +7,7 @@ import { audit } from '../lib/audit.js';
 import { getSettingBool } from '../lib/settings.js';
 import { findUserByUsername, withPermissions } from '../lib/auth.js';
 import { getRoomByNumber, recordMovement, MovementError } from '../lib/movements.js';
+import { openIncidentsForRoom } from '../lib/stats.js';
 import {
   PMS_MOVEMENT_TYPE, roomNumberFromKey, decidePrecedence, isStalePmsEvent, pmsComment,
 } from '../lib/pms.js';
@@ -106,7 +107,7 @@ router.post('/pms/events', asyncRoute((req, res) => {
   const mapeo = roomNumberFromKey(cuerpo.roomKey);
   if (!mapeo.ok) {
     return res.status(400).json({
-      error: 'roomKey inválido: se esperan cuatro dígitos con ceros a la izquierda, por ejemplo "0301".',
+      error: 'roomKey inválido: se esperan tres o cuatro dígitos, por ejemplo "0301" o "301".',
       reason: mapeo.reason,
     });
   }
@@ -150,8 +151,13 @@ router.post('/pms/events', asyncRoute((req, res) => {
     return res.json({ ok: true, applied: false, reason: 'evento_rezagado' });
   }
 
+  // Lo que sostiene a "Fuera de servicio" y a "Discrepancia" es el pendiente
+  // abierto, no el nombre del estado: cerrarlo no cambia el estado por sí solo,
+  // así que sin esto la habitación dejaría de escuchar al PMS para siempre.
+  const pendienteAbierto = openIncidentsForRoom(room.id).length > 0;
+
   const decision = decidePrecedence({
-    currentStatusCode: room.status_code, incomingStatusCode: status,
+    currentStatusCode: room.status_code, incomingStatusCode: status, pendienteAbierto,
   });
 
   // El reintento normal del webhook cae aquí: ni movimiento ni bitácora, que

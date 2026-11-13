@@ -120,6 +120,22 @@ async function arrancarCdh({ token = TOKEN } = {}) {
     },
 
     /** Pone un estado directo en la base: aquí se prueba el cableado, no la regla. */
+    /**
+     * Abre o cierra el pendiente que sostiene a "Fuera de servicio" y a
+     * "Discrepancia": un campo de Mantenimiento en falla. Sin esto, forzar el
+     * estado a secas monta una habitación que ningún pendiente respalda, y la
+     * regla de precedencia —con razón— le devuelve el mando al PMS.
+     */
+    pendiente(numero, abierto) {
+      const bd = new Database(bdPath);
+      try {
+        bd.prepare(`UPDATE room_details SET value = @v
+                     WHERE room_id = (SELECT id FROM rooms WHERE number = @n)
+                       AND field_id = (SELECT id FROM fields WHERE code = 'plomeria')`)
+          .run({ v: abierto ? 'Falla' : 'OK', n: String(numero) });
+      } finally { bd.close(); }
+    },
+
     forzarEstado(numero, code) {
       const bd = new Database(bdPath);
       try {
@@ -230,10 +246,23 @@ describe('Entrada del PMS encendida', () => {
     assert.equal(cdh.estado('301').code, 'SALIDA');
   });
 
-  test('un roomKey sin ceros a la izquierda es un 400: Arpón cambió de contrato', async () => {
+  test('un roomKey de tres dígitos también resuelve: el formato de producción no está confirmado', async () => {
+    // La documentación de Arpón trae claves de tres ("101", "201") y el hotel
+    // de pruebas las da de cuatro. Si exigiéramos cuatro y producción mandara
+    // tres, se rechazaría el cien por cien de los eventos.
     const r = await cdh.evento({ roomKey: '415', status: 'OCUPADO_LIMPIO' });
-    assert.equal(r.status, 400);
-    assert.equal((await r.json()).reason, 'formato_de_roomkey');
+    assert.equal(r.status, 200);
+    const cuerpo = await r.json();
+    assert.equal(cuerpo.room, '415');
+    assert.equal(cuerpo.applied, true);
+  });
+
+  test('lo que no es un número de habitación sigue siendo 400', async () => {
+    for (const malo of ['41', '00415', 'abcd', '']) {
+      const r = await cdh.evento({ roomKey: malo, status: 'OCUPADO_LIMPIO' });
+      assert.equal(r.status, 400, `debió rechazar ${JSON.stringify(malo)}`);
+      assert.equal((await r.json()).reason, 'formato_de_roomkey');
+    }
   });
 
   test('sin estado, 400', async () => {
@@ -270,6 +299,7 @@ describe('Entrada del PMS encendida', () => {
 
   test('fuera de servicio no vuelve a la venta, y el aviso queda en el historial', async () => {
     cdh.forzarEstado('0502'.replace(/^0+/, ''), 'FUERA_SERVICIO');
+    cdh.pendiente('502', true);
     const antes = cdh.movimientos('502').length;
 
     const r = await cdh.evento({
@@ -307,6 +337,7 @@ describe('El desacuerdo con el PMS se ve en el rack', () => {
 
   test('un aviso rechazado queda anotado en la habitación', async () => {
     cdh.forzarEstado('602', 'FUERA_SERVICIO');
+    cdh.pendiente('602', true);
     assert.equal(cdh.conflicto('602').estado, null, 'premisa: nace sin desacuerdo');
 
     const r = await cdh.evento({ roomKey: '0602', status: 'DISPONIBLE_LIMPIO' });
@@ -342,14 +373,38 @@ describe('El desacuerdo con el PMS se ve en el rack', () => {
     assert.ok(!fila.reasons.some((x) => x.code === 'pms'));
   });
 
+  test('cerrado el pendiente, Arpón recupera el mando aunque el estado no cambie', async () => {
+    // El caso del piso: una fuga deja la 604 fuera de servicio y Mantenimiento
+    // la repara. Cerrar el pendiente NO cambia el estado —en el CDH hay que
+    // liberarla—, así que antes de este arreglo la habitación se quedaba
+    // sorda a Arpón para siempre.
+    cdh.forzarEstado('604', 'FUERA_SERVICIO');
+    cdh.pendiente('604', true);
+    const conPendiente = await cdh.evento({ roomKey: '0604', status: 'OCUPADO_LIMPIO' });
+    assert.equal((await conPendiente.json()).reason, 'estado_propio_del_cdh');
+    assert.equal(cdh.estado('604').code, 'FUERA_SERVICIO');
+
+    // Mantenimiento repara: el pendiente se cierra, el estado sigue igual.
+    cdh.pendiente('604', false);
+    assert.equal(cdh.estado('604').code, 'FUERA_SERVICIO', 'premisa: el estado no se movió solo');
+
+    const yaReparada = await cdh.evento({ roomKey: '0604', status: 'OCUPADO_LIMPIO' });
+    const cuerpo = await yaReparada.json();
+    assert.equal(cuerpo.applied, true, 'ya no hay nada que sostenga el estado del CDH');
+    assert.equal(cuerpo.reason, 'pendiente_cerrado');
+    assert.equal(cdh.estado('604').code, 'OCUPADO_LIMPIO');
+  });
+
   test('mover la habitación por cualquier vía también limpia el desacuerdo', async () => {
     cdh.forzarEstado('603', 'FUERA_SERVICIO');
+    cdh.pendiente('603', true);
     await cdh.evento({ roomKey: '0603', status: 'DISPONIBLE_LIMPIO' });
     assert.equal(cdh.conflicto('603').estado, 'DISPONIBLE_LIMPIO', 'premisa: hay desacuerdo');
 
     // Se levanta el fuera de servicio y entra un aviso que SÍ se aplica: la
     // marca la limpia `recordMovement`, no la ruta.
     cdh.forzarEstado('603', 'SALIDA');
+    cdh.pendiente('603', false);
     const r = await cdh.evento({ roomKey: '0603', status: 'DISPONIBLE_LIMPIO' });
     assert.equal((await r.json()).applied, true);
     assert.equal(cdh.conflicto('603').estado, null);
