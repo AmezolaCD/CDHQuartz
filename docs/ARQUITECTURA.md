@@ -207,9 +207,12 @@ metido en una habitación averiada.
 
 El aviso que no gana **no se pierde**: deja su movimiento en el historial, con
 la hora y el usuario de Arpón, y la habitación queda marcada con el estado que
-el PMS le atribuye (`pms_conflict_status`), que sale en *Requiere atención*
-como un motivo más. Se apaga en cuanto la habitación se mueve por cualquier
-vía o el PMS vuelve a coincidir. No se reutiliza *Discrepancia* para esto:
+el PMS le atribuye (`pms_conflict_status`), que se ve **en su tarjeta del
+rack** —junto al estado, como la leyenda de «Reporte abierto»— y en *Requiere
+atención* como un motivo más. En la tarjeta porque es ahí donde se decide:
+quien hace la ronda no abre otra pantalla. Se apaga en cuanto la habitación se
+mueve por cualquier vía o el PMS vuelve a coincidir, y apagarlo deja su entrada
+en la bitácora, igual que encenderlo. No se reutiliza *Discrepancia* para esto:
 ese estado significa que Ama de Llaves y Recepción no coinciden, y cargarle
 además el desacuerdo con el PMS volvería ambiguo el único estado cuyo valor es
 ser inequívoco.
