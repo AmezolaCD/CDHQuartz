@@ -131,6 +131,11 @@ button.kpi:hover{transform:translateY(-1px);box-shadow:var(--sh-2)}
 .flag.inc > span{overflow-wrap:break-word;min-width:0;text-align:left}
 .flag.inc svg{flex:none;margin-top:2px}
 .flag.rec{background:var(--warn-bg);color:var(--warn)}
+/* El desacuerdo con el PMS: informa, no alarma. Se parte en dos líneas igual
+   que "Reporte abierto" — media leyenda no dice nada. */
+.flag.pms{background:var(--info-bg);color:var(--info);align-items:flex-start;max-width:100%}
+.flag.pms > span{overflow-wrap:break-word;min-width:0;text-align:left}
+.flag.pms svg{flex:none;margin-top:2px}
 .flag.att{background:var(--info-bg);color:var(--info)}
 .flag.solicitud{color:var(--pr);border:1px solid var(--pr);background:transparent}
 /* ------------------------------------------------- selección en bloque */

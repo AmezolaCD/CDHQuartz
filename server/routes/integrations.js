@@ -7,9 +7,10 @@ import { audit } from '../lib/audit.js';
 import { getSettingBool } from '../lib/settings.js';
 import { findUserByUsername, withPermissions } from '../lib/auth.js';
 import { getRoomByNumber, recordMovement, MovementError } from '../lib/movements.js';
+import { openIncidentsForRoom } from '../lib/stats.js';
 import {
   PMS_MOVEMENT_TYPE, roomNumberFromKey, decidePrecedence, isStalePmsEvent, pmsComment,
-  pmsEventInstant,
+  pmsEventKey, isDuplicatePmsEvent, epochFromPmsTimestamp, pmsEventInstant,
 } from '../lib/pms.js';
 
 const router = express.Router();
@@ -120,7 +121,7 @@ router.post('/pms/events', asyncRoute((req, res) => {
   const mapeo = roomNumberFromKey(cuerpo.roomKey);
   if (!mapeo.ok) {
     return res.status(400).json({
-      error: 'roomKey inválido: se esperan cuatro dígitos con ceros a la izquierda, por ejemplo "0301".',
+      error: 'roomKey inválido: se esperan tres o cuatro dígitos, por ejemplo "0301" o "301".',
       reason: mapeo.reason,
     });
   }
@@ -154,6 +155,21 @@ router.post('/pms/events', asyncRoute((req, res) => {
     return res.json({ ok: true, applied: false, reason: 'habitacion_desconocida' });
   }
 
+  // Un reintento del webhook repite el cuerpo tal cual. Si el aviso no trae
+  // fecha, es lo único que permite distinguirlo de un cambio nuevo: sin esto,
+  // un reintento tardío devuelve la habitación a un estado ya superado y deja
+  // un movimiento duplicado en un historial que no se puede borrar.
+  const clave = pmsEventKey({ roomKey: cuerpo.roomKey, status, changedAt, changedBy });
+  if (isDuplicatePmsEvent({
+    key: clave,
+    lastKey: room.pms_last_event_key,
+    lastEpoch: room.pms_last_event_epoch,
+    now: stamp().epoch,
+    tieneFecha: epochFromPmsTimestamp(changedAt) !== null,
+  })) {
+    return res.json({ ok: true, applied: false, reason: 'duplicado', room: room.number });
+  }
+
   if (isStalePmsEvent({ changedAt, lastEventAt: room.pms_event_at })) {
     audit({
       entityType: 'integration', entityId: room.id, entityLabel: 'pms',
@@ -164,8 +180,13 @@ router.post('/pms/events', asyncRoute((req, res) => {
     return res.json({ ok: true, applied: false, reason: 'evento_rezagado' });
   }
 
+  // Lo que sostiene a "Fuera de servicio" y a "Discrepancia" es el pendiente
+  // abierto, no el nombre del estado: cerrarlo no cambia el estado por sí solo,
+  // así que sin esto la habitación dejaría de escuchar al PMS para siempre.
+  const pendienteAbierto = openIncidentsForRoom(room.id).length > 0;
+
   const decision = decidePrecedence({
-    currentStatusCode: room.status_code, incomingStatusCode: status,
+    currentStatusCode: room.status_code, incomingStatusCode: status, pendienteAbierto,
   });
 
   // El reintento normal del webhook cae aquí: ni movimiento ni bitácora, que
@@ -181,7 +202,23 @@ router.post('/pms/events', asyncRoute((req, res) => {
     }
     const instante = instanteSiAvanza(room, changedAt);
     if (instante) cambios.pms_event_at = instante;
-    if (Object.keys(cambios).length) update('rooms', room.id, cambios);
+    if (Object.keys(cambios).length) {
+      // Apagar un aviso que SÍ se registró al encenderse no puede ser la única
+      // escritura sobre `rooms` sin rastro: van juntas o no van.
+      const huboDesacuerdo = !!room.pms_conflict_status;
+      transaction(() => {
+        update('rooms', room.id, cambios);
+        if (huboDesacuerdo) {
+          audit({
+            entityType: 'integration', entityId: room.id, entityLabel: 'pms',
+            action: 'pms_desacuerdo_resuelto', actor, roomId: room.id,
+            reason: `Arpón volvió a coincidir con el CDH en "${room.status_name}".`,
+            before: { pms_conflict_status: room.pms_conflict_status },
+            after: { pms_conflict_status: null }, req,
+          });
+        }
+      })();
+    }
     return res.json({ ok: true, applied: false, reason: 'sin_cambio', room: room.number });
   }
 
@@ -225,6 +262,13 @@ router.post('/pms/events', asyncRoute((req, res) => {
       // haya aplicado: igual nos dijo qué cree el PMS y cuándo.
       const instante = instanteSiAvanza(room, changedAt);
       if (instante) marcas.pms_event_at = instante;
+      // La clave del aviso sólo se recuerda si SÍ se aplicó: uno que no se
+      // aplicó no dejó nada que un reintento pueda duplicar, y el mismo aviso
+      // que ayer perdió contra un pendiente abierto debe poder ganar hoy.
+      if (r.statusChanged) {
+        marcas.pms_last_event_key = clave;
+        marcas.pms_last_event_epoch = stamp().epoch;
+      }
       if (Object.keys(marcas).length) update('rooms', room.id, marcas);
       return r;
     })();

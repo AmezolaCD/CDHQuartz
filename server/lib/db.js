@@ -90,6 +90,19 @@ export const COLUMNAS_NUEVAS = [
     column: 'pms_conflict_at',
     ddl: 'TEXT',
   },
+  // Con qué aviso del PMS se quedó la habitación la última vez, y cuándo. Es
+  // lo único que permite reconocer un reintento cuando el aviso no trae fecha:
+  // el contrato de Arpón no promete `changedAt` ni un identificador de evento.
+  {
+    table: 'rooms',
+    column: 'pms_last_event_key',
+    ddl: 'TEXT',
+  },
+  {
+    table: 'rooms',
+    column: 'pms_last_event_epoch',
+    ddl: 'INTEGER',
+  },
   // Último aviso del PMS que se procesó, con la hora de Arpón normalizada a
   // UTC. Dos marcas del mismo reloj sí son comparables; la del CDH no lo es.
   {
