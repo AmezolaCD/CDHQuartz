@@ -16,9 +16,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import Database from 'better-sqlite3';
 
 const CLAVE = 'Prueba#Interfaz2026';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cdh-ui-'));
+
+/**
+ * El desacuerdo con el PMS se anota en la habitación desde la ruta de
+ * integración, que necesita token y un PMS que llame. Para mirar cómo se VE
+ * basta con dejar la marca puesta: esto prueba la tarjeta, no el cableado,
+ * que ya tiene sus propias pruebas en test/pms-events.test.js.
+ */
+function marcarDesacuerdo(numero, code) {
+  const bd = new Database(path.join(TMP, 'cdh.sqlite'));
+  try {
+    bd.prepare(`UPDATE rooms SET pms_conflict_status = @c, pms_conflict_at = @t
+                 WHERE number = @n`).run({ c: code, t: new Date().toISOString(), n: String(numero) });
+  } finally { bd.close(); }
+}
 const RAIZ = path.resolve(import.meta.dirname, '..', '..');
 
 let servidor; let navegador; let base;
@@ -334,6 +349,29 @@ describe('Recorrido de operación', () => {
     await page.locator('.drawer [data-tab="historial"]').click();
     await page.waitForSelector('.tl-card');
     assert.match(await page.locator('.timeline').textContent(), /La chapa de la puerta no cierra/);
+    await page.close();
+  });
+
+  test('el desacuerdo con el PMS se ve en la tarjeta, no sólo en la lista', async () => {
+    // Quien hace la ronda mira el rack, no "Requiere atención". Si Arpón cree
+    // vendible una habitación que aquí está fuera de servicio, eso tiene que
+    // verse donde se decide.
+    marcarDesacuerdo('309', 'DISPONIBLE_LIMPIO');
+    const { page } = await abrirSesion();
+    await page.evaluate(() => { location.hash = '#/pisos'; });
+    await page.waitForSelector('.rack-grid');
+    await page.waitForTimeout(600);
+
+    const tarjeta = page.locator('.room', { hasText: '309' }).first();
+    const aviso = tarjeta.locator('.flag.pms');
+    assert.equal(await aviso.count(), 1, 'la tarjeta debe llevar el aviso del PMS');
+    // Con el nombre del estado, no con su código.
+    assert.match(await aviso.textContent(), /Disponible limpio/);
+
+    // Y cabe: media leyenda no dice nada.
+    const cortado = await aviso.evaluate((e) => e.scrollHeight > e.clientHeight + 1
+      || e.scrollWidth > e.clientWidth + 1);
+    assert.equal(cortado, false, 'el aviso no debe recortarse');
     await page.close();
   });
 

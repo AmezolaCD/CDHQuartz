@@ -36,7 +36,10 @@ function decorate(rooms) {
       incidentCount: inc.length,
       incidents: inc.map((i) => ({ field: i.field_label, value: i.value, category: i.category_name })),
       recurrenceCount: recByRoom.get(r.id) ?? 0,
-      needsAttention: !!r.counts_attention || inc.length > 0,
+      // El desacuerdo con el PMS también es algo que atender: la habitación
+      // conserva su estado, pero alguien tiene que mirar cuál de los dos
+      // sistemas tiene razón.
+      needsAttention: !!r.counts_attention || inc.length > 0 || !!r.pms_conflict_status,
     };
   });
 }

@@ -24,6 +24,17 @@ export function roomCard(r) {
       r.incidentCount === 1 ? 'Un reporte abierto' : `${r.incidentCount} reportes abiertos`}">${
       icon('alert', 10)}<span>${r.incidentCount === 1 ? 'Reporte abierto' : `${r.incidentCount} reportes`}</span></span>`);
   }
+  // El PMS dice una cosa y el CDH otra. No es un estado más —la habitación
+  // conserva el suyo— sino un aviso que convive con él, como "Reporte
+  // abierto": quien hace la ronda ve que Arpón la cree vendible y decide. Sin
+  // esto el desacuerdo sólo vivía en la lista de "Requiere atención", que es
+  // justo la pantalla que no se mira estando en el pasillo.
+  if (r.pms_conflict_status) {
+    const nombre = (state.statuses ?? []).find((s) => s.code === r.pms_conflict_status)?.name
+      ?? r.pms_conflict_status;
+    flags.push(`<span class="flag pms" title="El PMS la reporta «${esc(nombre)}»">${
+      icon('swap', 10)}<span>PMS: ${esc(nombre)}</span></span>`);
+  }
   if (r.recurrenceCount >= 2) flags.push(`<span class="flag rec" title="Reincidente">${icon('repeat', 10)}${r.recurrenceCount}</span>`);
   if (!r.incidentCount && r.counts_attention) flags.push(`<span class="flag att">${icon('bell', 10)}</span>`);
   return `<button class="room ${r.active ? '' : 'inactive'}" style="--st:${esc(r.status_color)}"

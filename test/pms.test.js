@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   roomNumberFromKey, decidePrecedence, epochFromPmsTimestamp, isStalePmsEvent,
   pmsComment, pmsEventInstant, ESTADOS_PROPIOS_DEL_CDH, PMS_MOVEMENT_TYPE,
+  pmsEventKey, isDuplicatePmsEvent, VENTANA_DUPLICADO_MS,
 } from '../server/lib/pms.js';
 import { ROOM_STATUSES, MOVEMENT_TYPES, FLOOR_MAP } from '../server/db/catalog.js';
 
@@ -59,8 +60,17 @@ describe('roomKey de Arpón → número del CDH', () => {
     }
   });
 
-  test('rechaza lo que no sea exactamente cuatro dígitos', () => {
-    for (const malo of ['415', '00301', '', '  ', 'abcd', '03o1', '0301 ', '10022']) {
+  test('acepta también tres dígitos: el formato de producción no está confirmado', () => {
+    // La documentación de GetRoomsByHotel trae claves de tres ("101", "201") y
+    // el hotel de pruebas las da de cuatro. Exigir cuatro rechazaría todos los
+    // eventos si en producción fueran tres; lo que decide que una clave es
+    // buena es que la habitación exista, y de eso se encarga la ruta.
+    assert.deepEqual(roomNumberFromKey('415'), { ok: true, number: '415' });
+    assert.deepEqual(roomNumberFromKey('301'), { ok: true, number: '301' });
+  });
+
+  test('rechaza lo que no sean tres o cuatro dígitos', () => {
+    for (const malo of ['00301', '', '  ', 'abcd', '03o1', '0301 ', '10022', '41']) {
       assert.equal(roomNumberFromKey(malo).ok, false, `debió rechazar ${JSON.stringify(malo)}`);
     }
   });
@@ -90,7 +100,9 @@ describe('Precedencia: qué estado gana', () => {
   test('un estado propio del CDH no lo pisa ningún aviso del PMS', () => {
     for (const actual of ESTADOS_PROPIOS_DEL_CDH) {
       for (const entra of COMPARTIDOS) {
-        const d = decidePrecedence({ currentStatusCode: actual, incomingStatusCode: entra });
+        const d = decidePrecedence({
+          currentStatusCode: actual, incomingStatusCode: entra, pendienteAbierto: true,
+        });
         assert.equal(d.apply, false, `${actual} no debió ceder ante ${entra}`);
         assert.equal(d.reason, 'estado_propio_del_cdh');
       }
@@ -100,6 +112,7 @@ describe('Precedencia: qué estado gana', () => {
   test('el caso que decide todo: fuera de servicio no vuelve a la venta', () => {
     const d = decidePrecedence({
       currentStatusCode: 'FUERA_SERVICIO', incomingStatusCode: 'DISPONIBLE_LIMPIO',
+      pendienteAbierto: true,
     });
     assert.deepEqual(d, { apply: false, reason: 'estado_propio_del_cdh' });
   });
@@ -118,14 +131,39 @@ describe('Precedencia: qué estado gana', () => {
     }
   });
 
-  test('la regla se agota: cerrado el pendiente, Arpón recupera el mando', () => {
-    // Misma habitación, antes y después de "Liberar habitación" en el CDH.
-    assert.equal(decidePrecedence({
+  test('la regla se agota al cerrar el pendiente, aunque el estado no cambie', () => {
+    // El caso real: una fuga deja la habitación fuera de servicio; Mantenimiento
+    // la repara y cierra su pendiente. Cerrar el pendiente NO cambia el estado
+    // —en el CDH hay que liberarla—, así que si la regla mirara sólo el nombre
+    // del estado, esa habitación dejaría de escuchar a Arpón para siempre.
+    const conPendiente = decidePrecedence({
       currentStatusCode: 'FUERA_SERVICIO', incomingStatusCode: 'OCUPADO_LIMPIO',
+      pendienteAbierto: true,
+    });
+    assert.deepEqual(conPendiente, { apply: false, reason: 'estado_propio_del_cdh' });
+
+    const yaReparada = decidePrecedence({
+      currentStatusCode: 'FUERA_SERVICIO', incomingStatusCode: 'OCUPADO_LIMPIO',
+      pendienteAbierto: false,
+    });
+    assert.deepEqual(yaReparada, { apply: true, reason: 'pendiente_cerrado' });
+  });
+
+  test('vale igual para Discrepancia', () => {
+    assert.equal(decidePrecedence({
+      currentStatusCode: 'DISCREPANCIA', incomingStatusCode: 'SALIDA', pendienteAbierto: true,
     }).apply, false);
     assert.equal(decidePrecedence({
-      currentStatusCode: 'DISPONIBLE_LIMPIO', incomingStatusCode: 'OCUPADO_LIMPIO',
+      currentStatusCode: 'DISCREPANCIA', incomingStatusCode: 'SALIDA', pendienteAbierto: false,
     }).apply, true);
+  });
+
+  test('si quien llama no dice nada, el CDH conserva su estado', () => {
+    // El olvido tiene que costar unas horas sin vender, no un huésped metido
+    // en una habitación averiada.
+    assert.equal(decidePrecedence({
+      currentStatusCode: 'FUERA_SERVICIO', incomingStatusCode: 'DISPONIBLE_LIMPIO',
+    }).apply, false);
   });
 
   test('un código desconocido NO se filtra aquí: lo rechaza la puerta de escritura', () => {
@@ -278,5 +316,58 @@ describe('El comentario del movimiento', () => {
     const c = pmsComment({ apply: true, incomingLabel: 'Salida' });
     assert.match(c, /Arpón reportó "Salida"/);
     assert.ok(!c.includes('()'), 'no debe quedar un paréntesis vacío');
+  });
+});
+
+describe('Reintentos del webhook, que llegan sin fecha', () => {
+  const clave = pmsEventKey({ roomKey: '0301', status: 'SALIDA', changedBy: 'ama01' });
+
+  test('el mismo aviso repetido en la ventana es un reintento', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: false,
+    }), true);
+  });
+
+  test('pasada la ventana ya no: podría ser un cambio de verdad', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000,
+      now: 1_000_000 + VENTANA_DUPLICADO_MS + 1, tieneFecha: false,
+    }), false);
+  });
+
+  test('con fecha utilizable no se mira la clave: ordenar es mejor que adivinar', () => {
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: true,
+    }), false);
+  });
+
+  test('otro aviso distinto no es un reintento', () => {
+    const otro = pmsEventKey({ roomKey: '0301', status: 'DISPONIBLE_LIMPIO', changedBy: 'ama01' });
+    assert.equal(isDuplicatePmsEvent({
+      key: otro, lastKey: clave, lastEpoch: 1_000_000, now: 1_000_000 + 60_000,
+      tieneFecha: false,
+    }), false);
+  });
+
+  test('sin nada recordado, nada es reintento', () => {
+    for (const vacio of [null, undefined, '']) {
+      assert.equal(isDuplicatePmsEvent({
+        key: clave, lastKey: vacio, lastEpoch: 1_000_000, now: 1_000_001, tieneFecha: false,
+      }), false);
+    }
+    assert.equal(isDuplicatePmsEvent({
+      key: clave, lastKey: clave, lastEpoch: null, now: 1_000_001, tieneFecha: false,
+    }), false);
+  });
+
+  test('la clave distingue por habitación, estado, fecha y autor', () => {
+    const base = { roomKey: '0301', status: 'SALIDA', changedAt: '2026-11-13T09:00:00', changedBy: 'ama01' };
+    const igual = pmsEventKey({ ...base });
+    assert.equal(pmsEventKey(base), igual);
+    for (const campo of ['roomKey', 'status', 'changedAt', 'changedBy']) {
+      assert.notEqual(pmsEventKey({ ...base, [campo]: 'otro' }), igual, `${campo} debería contar`);
+    }
   });
 });

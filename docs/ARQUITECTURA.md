@@ -193,14 +193,26 @@ limpio*, aplicarlo la pone otra vez a la venta. De los dos errores posibles
 rack muestra vendible— el segundo cuesta un huésped reubicado y el primero unas
 horas sin vender.
 
-La regla se agota sola: cerrado el pendiente en el CDH, la habitación vuelve a
-los cinco compartidos y Arpón recupera el mando sin que nadie configure nada.
+La regla se agota sola, y lo que la sostiene es **el pendiente abierto, no el
+nombre del estado**: cerrado el pendiente —«Mantenimiento completado»,
+«Liberar habitación», o corregir el campo en falla— Arpón recupera el mando,
+aunque el estado en el CDH siga diciendo *Fuera de servicio*. Esa distinción no
+es un matiz: cerrar un pendiente no cambia el estado por sí solo —en el CDH hay
+que liberar la habitación—, así que mirar el nombre dejaría a esa habitación
+sorda al PMS para siempre.
+
+Si quien pregunta no sabe decir si hay pendiente abierto, se supone que sí: de
+los dos errores posibles, unas horas sin vender cuestan menos que un huésped
+metido en una habitación averiada.
 
 El aviso que no gana **no se pierde**: deja su movimiento en el historial, con
 la hora y el usuario de Arpón, y la habitación queda marcada con el estado que
-el PMS le atribuye (`pms_conflict_status`), que sale en *Requiere atención*
-como un motivo más. Se apaga en cuanto la habitación se mueve por cualquier
-vía o el PMS vuelve a coincidir. No se reutiliza *Discrepancia* para esto:
+el PMS le atribuye (`pms_conflict_status`), que se ve **en su tarjeta del
+rack** —junto al estado, como la leyenda de «Reporte abierto»— y en *Requiere
+atención* como un motivo más. En la tarjeta porque es ahí donde se decide:
+quien hace la ronda no abre otra pantalla. Se apaga en cuanto la habitación se
+mueve por cualquier vía o el PMS vuelve a coincidir, y apagarlo deja su entrada
+en la bitácora, igual que encenderlo. No se reutiliza *Discrepancia* para esto:
 ese estado significa que Ama de Llaves y Recepción no coinciden, y cargarle
 además el desacuerdo con el PMS volvería ambiguo el único estado cuyo valor es
 ser inequívoco.
@@ -229,6 +241,14 @@ cambio real es peor que registrar uno de más, que al menos queda en el
 historial.
 
 ### Lo que todavía no se puede
+
+El **formato de las claves de habitación no está confirmado** para el hotel de
+producción: el entorno de pruebas las entrega con cuatro dígitos y ceros a la
+izquierda (`"0301"`), pero el ejemplo de la documentación de `GetRoomsByHotel`
+las trae con tres (`"101"`). El CDH acepta las dos formas y resuelve contra su
+propio rack; una clave que no corresponda a ninguna habitación se registra como
+`habitacion_desconocida` y no cambia nada. Conviene pedirle a Arpón una muestra
+del hotel real para cerrarlo.
 
 Ninguna de las APIs de Arpón permite **leer** el estatus de limpieza de una
 habitación concreta: `GetRoomsByHotel` entrega las claves sin estado y
